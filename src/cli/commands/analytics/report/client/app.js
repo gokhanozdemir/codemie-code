@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6', cursor: '#E5484D' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -29,7 +29,7 @@
   }
   // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
   // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', 'gemini': 'Gemini CLI' };
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', cursor: 'Cursor', pi: 'Pi', 'gemini': 'Gemini CLI' };
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
@@ -53,6 +53,19 @@
     if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
     return String(n || 0);
   }
+  // ---- usage availability -------------------------------------------------
+  // Some agents record no token or cost data at all (analytics-only agents such as Cursor;
+  // also older Copilot CLI builds). The payload marks those with `usageUnavailableReason`,
+  // and their costUSD/tokens are structural zeros. Rendering them as "$0.00" / "0" would
+  // read as "this session was free", so every money/token cell goes through these helpers
+  // and shows an em dash instead. Aggregates only dash out when NOTHING in the group was
+  // measurable — a mixed group still shows the real sum of what was measured.
+  function usageUnknown(s) { return !!(s && s.usageUnavailableReason); }
+  function anyMeasured(list) { return (list || []).some(function (s) { return !usageUnknown(s); }); }
+  function fmtUSDOf(s, n) { return usageUnknown(s) ? '—' : fmtUSD(n); }
+  function fmtTokensOf(s, n) { return usageUnknown(s) ? '—' : fmtTokens(n); }
+  function fmtUSDAgg(list, n) { return anyMeasured(list) ? fmtUSD(n) : '—'; }
+
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function shortPath(p) { var parts = String(p || '').split('/'); return parts[parts.length - 1] || p; }
   // Human-readable session label: the cleaned first-prompt title, falling back to a short id.
@@ -481,7 +494,7 @@
         var topModel = topOf(ss.flatMap(function (s) { return s.models; }));
         // No text-transform: it would render a mapped label as "Github Copilot Cli".
         // Unmapped keys keep their original look via the capitalize fallback below.
-        return ['<span class="tag tag-sm"' + (AGENT_LABELS[a] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(a)) + '</span>', fmtNum(ss.length), tdNum(sum(ss, function (s) { return s.turns; })), tdNum(sum(ss, function (s) { return s.fileOps; })), tdNum(sum(ss, function (s) { return s.netLines; })), '<span class="tag tag-sm">' + esc(topModel || '—') + '</span>', tdNum(successRate(ss) + '%'), tdNum(fmtUSD(sum(ss, function (s) { return s.costUSD; })))];
+        return ['<span class="tag tag-sm"' + (AGENT_LABELS[a] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(a)) + '</span>', fmtNum(ss.length), tdNum(sum(ss, function (s) { return s.turns; })), tdNum(sum(ss, function (s) { return s.fileOps; })), tdNum(sum(ss, function (s) { return s.netLines; })), '<span class="tag tag-sm">' + esc(topModel || '—') + '</span>', tdNum(successRate(ss) + '%'), tdNum(fmtUSDAgg(ss, sum(ss, function (s) { return s.costUSD; })))];
       }),
       [false, true, true, true, true, false, true, true]);
     host.appendChild(detail);
@@ -509,7 +522,7 @@
         fmtNum(g.length),
         Math.round((g.length / fs.length) * 1000) / 10 + '%',
         fmtNum(Math.round(sum(g, function(s) { return s.turns; }) / g.length)),
-        fmtUSD(sum(g, function(s) { return s.costUSD; }) / g.length),
+        fmtUSDAgg(g, sum(g, function(s) { return s.costUSD; }) / g.length),
         (avg >= 0 ? '+' : '') + fmtNum(Math.round(avg)),
         fmtNum(Math.round(sum(g, function(s) { return s.fileOps; }) / g.length)),
         successRate(g) + '%'
@@ -554,11 +567,11 @@
         + '<td class="td-number">−' + fmtNum(sum(ss, function (s) { return s.linesRemoved; })) + '</td>';
     };
     rows.forEach(function (r, i) {
-      html += '<tr class="clickable" data-proj="' + i + '" data-proj-path="' + esc(r.p) + '"><td>▸ <span class="proj-link" data-proj-open="' + esc(r.p) + '">' + esc(shortPath(r.p)) + '</span></td><td class="td-number">' + fmtNum(r.ss.length) + '</td><td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.turns; })) + '</td>' + crudCells(r.ss) + '<td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(r.ss) + '%</td><td class="td-number">' + fmtUSD(sum(r.ss, function (s) { return s.costUSD; })) + '</td></tr>';
+      html += '<tr class="clickable" data-proj="' + i + '" data-proj-path="' + esc(r.p) + '"><td>▸ <span class="proj-link" data-proj-open="' + esc(r.p) + '">' + esc(shortPath(r.p)) + '</span></td><td class="td-number">' + fmtNum(r.ss.length) + '</td><td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.turns; })) + '</td>' + crudCells(r.ss) + '<td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(r.ss) + '%</td><td class="td-number">' + fmtUSDAgg(r.ss, sum(r.ss, function (s) { return s.costUSD; })) + '</td></tr>';
       // branch sub-rows (hidden)
       var byBranch = groupBy(r.ss, function (s) { return s.branch || '(none)'; });
       byBranch.forEach(function (bss, b) {
-        html += '<tr class="drill" data-parent="' + i + '" style="display:none"><td style="padding-left:28px">⎇ ' + esc(b) + '</td><td class="td-number">' + bss.length + '</td><td class="td-number">' + fmtNum(sum(bss, function (s) { return s.turns; })) + '</td>' + crudCells(bss) + '<td class="td-number">' + fmtNum(sum(bss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(bss) + '%</td><td class="td-number">' + fmtUSD(sum(bss, function (s) { return s.costUSD; })) + '</td></tr>';
+        html += '<tr class="drill" data-parent="' + i + '" style="display:none"><td style="padding-left:28px">⎇ ' + esc(b) + '</td><td class="td-number">' + bss.length + '</td><td class="td-number">' + fmtNum(sum(bss, function (s) { return s.turns; })) + '</td>' + crudCells(bss) + '<td class="td-number">' + fmtNum(sum(bss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(bss) + '%</td><td class="td-number">' + fmtUSDAgg(bss, sum(bss, function (s) { return s.costUSD; })) + '</td></tr>';
       });
     });
     html += '</tbody></table>';
@@ -869,7 +882,7 @@
         return [esc(s.sessionId.slice(0, 8)),
           '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>',
-          fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtTokens(s.tokens ? s.tokens.total : 0), fmtUSD(s.costUSD)];
+          fmtTokensOf(s, tkIn(s)), fmtTokensOf(s, tkOut(s)), fmtTokensOf(s, tkCached(s)), fmtTokensOf(s, s.tokens ? s.tokens.total : 0), fmtUSDOf(s, s.costUSD)];
       }),
       [false, false, false, true, true, true, true, true]) + '</div>';
     host.appendChild(topCard);
@@ -907,7 +920,7 @@
             promptCell,
             '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
-            fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
+            fmtNum(s.turns), fmtNum(s.netLines), fmtTokensOf(s, tkIn(s)), fmtTokensOf(s, tkOut(s)), fmtTokensOf(s, tkCached(s)), fmtUSDOf(s, s.costUSD)];
         }),
         [false, false, false, false, false, false, true, true, true, true, true, true],
         shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
@@ -1255,9 +1268,9 @@
       costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — output tokens only; this session recorded no full rollup, so cost is understated.</span>'));
     }
     var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
-      ['Input', fmtTokens(t.input), ''], ['Output', fmtTokens(t.output), ''],
-      ['Cache read', fmtTokens(t.cacheRead), ''], ['Cache create', fmtTokens(t.cacheCreation), ''],
-      ['Total', fmtTokens(t.total), '']
+      ['Input', fmtTokensOf(s, t.input), ''], ['Output', fmtTokensOf(s, t.output), ''],
+      ['Cache read', fmtTokensOf(s, t.cacheRead), ''], ['Cache create', fmtTokensOf(s, t.cacheCreation), ''],
+      ['Total', fmtTokensOf(s, t.total), '']
     ]));
     var actCard = card('Activity'); actCard._body.appendChild(statsEl([
       ['Turns / API', fmtNum(s.turns), ''],
@@ -1352,7 +1365,7 @@
     var netLines = sum(sessions, function (s) { return s.netLines || 0; });
     body.appendChild(statsEl([
       ['Sessions', fmtNum(sessions.length)],
-      ['Total cost', fmtUSD(totalCost)],
+      ['Total cost', fmtUSDAgg(sessions, totalCost)],
       ['Turns', fmtNum(totalTurns)],
       ['Net lines', (netLines >= 0 ? '+' : '') + fmtNum(netLines)]
     ]));
@@ -1367,7 +1380,7 @@
           esc(truncStr(firstWords(sessTitle(s), 12), 100)),
           esc(fmtWhen(s.startTime)),
           fmtNum(s.turns || 0),
-          fmtUSD(s.costUSD || 0),
+          fmtUSDOf(s, s.costUSD || 0),
           '<button class="btn-open" data-open-session="' + esc(s.sessionId) + '">Open ↗</button>'
         ];
       }),
