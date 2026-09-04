@@ -123,6 +123,54 @@ function writeCorruptDb(): void {
   writeFileSync(join(dir, 'ai-code-tracking.db'), 'this is not a sqlite file', 'utf-8');
 }
 
+interface ComposerHeaderRow {
+  composerId: string;
+  /** Overrides the row's `key` column; defaults to the bare `composerId`. */
+  key?: string;
+  /** Drops `composerId` from the JSON value, forcing the reader to fall back to `key`. */
+  omitComposerIdField?: boolean;
+  isDraft?: boolean;
+  projectPath?: string;
+  branch?: string;
+  createdOnBranch?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  filesChangedCount?: number;
+}
+
+/**
+ * A fixture `state.vscdb` with Cursor's real `composerHeaders` key/value table shape — the
+ * primary session-discovery source (see `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`).
+ * `CURSOR_HOME` relocates it to `<home>/User/globalStorage/state.vscdb`, mirroring
+ * `getCursorStateDbPath()`.
+ */
+async function writeComposerHeaders(rows: ComposerHeaderRow[]): Promise<void> {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = join(cursorHome, 'User', 'globalStorage');
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, 'state.vscdb'));
+  db.exec('CREATE TABLE composerHeaders (key TEXT, value TEXT)');
+  const insert = db.prepare('INSERT INTO composerHeaders (key, value) VALUES (?, ?)');
+  for (const row of rows) {
+    const value = JSON.stringify({
+      composerId: row.omitComposerIdField ? undefined : row.composerId,
+      isDraft: row.isDraft,
+      workspaceIdentifier: row.projectPath ? { uri: { fsPath: row.projectPath } } : undefined,
+      activeBranch: row.branch ? { branchName: row.branch } : undefined,
+      createdOnBranch: row.createdOnBranch,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      totalLinesAdded: row.linesAdded,
+      totalLinesRemoved: row.linesRemoved,
+      filesChangedCount: row.filesChangedCount,
+    });
+    insert.run(row.key ?? row.composerId, value);
+  }
+  db.close();
+}
+
 /** A managed agent's native session, for contrast with the unmanaged Cursor rows. */
 const claudeDiscovery: DiscoveredNative = {
   agentName: 'claude',
@@ -355,20 +403,15 @@ describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor enrichment from
     expect(cursorRows(rows)[0].deltas[0].fileOperations).toEqual([]);
   });
 
-  it('produces no session for a conversation that exists only in the database', async () => {
+  it('discovers a composerHeaders-only session with no transcript on disk (issue #10: composerHeaders became the primary discovery source, so a conversation that used to be invisible without a transcript file now surfaces as a real, transcript-less row instead of being dropped)', async () => {
     writeTranscript('conv-a', conversation('add cursor analytics'));
-    await writeTrackingDb([
-      {
-        conversationId: 'composer-only',
-        fileName: join(projectDir, 'src', 'app.ts'),
-        model: 'claude-4.5-sonnet',
-        timestamp: FIRST_EDIT_MS,
-      },
+    await writeComposerHeaders([
+      { composerId: 'header-only', projectPath: projectDir, createdAt: FIRST_EDIT_MS, updatedAt: LAST_EDIT_MS },
     ]);
 
     const { rows } = await runLoader();
 
-    expect(cursorRows(rows).map((s) => s.sessionId)).toEqual(['conv-a']);
+    expect(cursorRows(rows).map((s) => s.sessionId).sort()).toEqual(['conv-a', 'header-only']);
   });
 });
 
@@ -406,6 +449,116 @@ describe('loadNativeSessions — Cursor degrades to transcript-only rows', () =>
 
     expect(cursorRows(rows).map((s) => s.sessionId)).toEqual(['conv-a']);
     expect(cursorRows(rows)[0].deltas[0].fileOperations).toEqual([]);
+  });
+});
+
+/**
+ * `composerHeaders` in `state.vscdb` is the primary session-discovery source (see the module
+ * doc comment in `cursor.session.ts` and `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`);
+ * a transcript is no longer required for a conversation to be discoverable, and when a header
+ * exists it settles project path, branch and line counts outright instead of the transcript-only
+ * fallbacks (slug walk, tracking-db files, prompt stamps) exercised elsewhere in this file.
+ */
+describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor composerHeaders as the primary discovery source', () => {
+  it('surfaces project, branch, line counts and files-changed from a composerHeaders-only session', async () => {
+    // No transcript exists for this composerId, so there are no messages to stamp `gitBranch`
+    // onto — project path, line counts and files-changed all come straight off the header and
+    // never depended on a message existing. Branch used to be message-only too (see
+    // `applyBranch` in cursor.session.ts) and so would have silently gone missing for exactly
+    // this — the majority — shape of session; `synthesizeRawSession`'s branch resolution now
+    // falls back to `parsed.metadata.branch` when there are no messages to vote over, which is
+    // what lets this session still report one.
+    await writeComposerHeaders([
+      {
+        composerId: 'header-full',
+        projectPath: projectDir,
+        branch: 'feature/header-only',
+        createdAt: FIRST_EDIT_MS,
+        updatedAt: LAST_EDIT_MS,
+        linesAdded: 42,
+        linesRemoved: 7,
+        filesChangedCount: 3,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.sessionId).toBe('header-full');
+    expect(row.startEvent!.data.workingDirectory).toBe(projectDir);
+    expect(row.deltas[0].gitBranch).toBe('feature/header-only');
+    expect(row.deltas[0].filesChangedCount).toBe(3);
+    expect(row.deltas[0].fileOperations).toEqual([
+      { type: 'edit', path: projectDir, linesAdded: 42, linesRemoved: 7 },
+    ]);
+  });
+
+  it('excludes a draft composerHeaders row from discovery entirely', async () => {
+    // A draft was never started, so surfacing it as a discoverable session would be misleading.
+    await writeComposerHeaders([{ composerId: 'draft-one', projectPath: projectDir, isDraft: true }]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)).toEqual([]);
+  });
+
+  it('takes the project path and branch from the header rather than the slug walk when a session has both', async () => {
+    // The transcript's own slug resolves to nothing on disk, so if the header were being
+    // ignored this would report 'Unknown' instead of the header's real project path. Branch is
+    // stamped onto the transcript's own messages here (see `applyBranch` in cursor.session.ts);
+    // the header-only test above exercises the message-less fallback path instead.
+    writeTranscript('both-conv', conversation('ship it'), 'Users-nobody-vanished-project');
+    await writeComposerHeaders([
+      { composerId: 'both-conv', projectPath: projectDir, branch: 'feature/cursor-header' },
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.startEvent!.data.workingDirectory).toBe(projectDir);
+    expect(row.deltas[0].gitBranch).toBe('feature/cursor-header');
+  });
+
+  it('prefers the header’s own timestamps over the tracking database’s recorded edit times', async () => {
+    writeTranscript('window-conv', conversation('ship it'));
+    const headerCreated = Date.now() - 10 * HOUR;
+    const headerUpdated = Date.now() - 9 * HOUR;
+    await writeComposerHeaders([
+      { composerId: 'window-conv', projectPath: projectDir, createdAt: headerCreated, updatedAt: headerUpdated },
+    ]);
+    await writeTrackingDb([
+      {
+        conversationId: 'window-conv',
+        fileName: join(projectDir, 'src', 'app.ts'),
+        model: 'claude-4.5-sonnet',
+        timestamp: FIRST_EDIT_MS,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.startEvent!.data.startTime).toBe(headerCreated);
+    expect(row.endEvent!.data.endTime).toBe(headerUpdated);
+  });
+
+  it('resolves the composerId from a prefixed key when the JSON value carries none', async () => {
+    // `key` on the key/value table shape commonly prefixes the id (e.g.
+    // `composerHeaderData:<composerId>`); the reader takes the last `:`-delimited segment.
+    await writeComposerHeaders([
+      {
+        composerId: 'prefixed-conv',
+        key: 'composerHeaderData:prefixed-conv',
+        omitComposerIdField: true,
+        projectPath: projectDir,
+        createdAt: FIRST_EDIT_MS,
+        updatedAt: LAST_EDIT_MS,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows).map((s) => s.sessionId)).toEqual(['prefixed-conv']);
   });
 });
 

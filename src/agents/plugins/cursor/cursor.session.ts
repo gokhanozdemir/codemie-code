@@ -1,34 +1,46 @@
 /**
  * Cursor session adapter — analytics-only.
  *
- * Cursor keeps one transcript per agent conversation at
- * `~/.cursor/projects/<project-slug>/agent-transcripts/<conversation-id>/<conversation-id>.jsonl`.
- * `projects/` also holds directories that are not projects at all (numeric window ids,
- * `empty-window`) and project directories holding only `canvases`/`terminals`/`mcps`, so
- * discovery keys on the presence of `agent-transcripts` rather than on the directory name.
+ * Discovery is keyed on `composerId`, the identifier Cursor uses for one agent conversation
+ * across every local store it writes: `state.vscdb`'s `composerHeaders` table (primary — see
+ * `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`), the
+ * `~/.cursor/projects/<project-slug>/agent-transcripts/<composerId>/<composerId>.jsonl`
+ * transcript (secondary, joined by the shared id), and `ai_code_hashes.conversationId` in the
+ * AI-tracking database (enrichment, same join). A session can have a header with no transcript
+ * (most of them — transcripts cover a small fraction of real sessions), a transcript with no
+ * header (observed rarely — schema drift, a header row Cursor pruned), or both; discovery
+ * unions the two id sets rather than requiring either alone.
  *
- * What a transcript can and cannot tell us is the whole design constraint here. It carries
- * role-tagged text, tool_use blocks, turn markers, and a human-readable stamp on each prompt —
- * but no model and no token counts. So:
+ * `composerHeaders` is what makes project path, branch and line counts trustworthy:
+ * `workspaceIdentifier.uri.fsPath` names the project directly, `activeBranch.branchName` /
+ * `createdOnBranch` name the real branch, and `totalLinesAdded` / `totalLinesRemoved` /
+ * `filesChangedCount` are Cursor's own totals rather than something reconstructed from content
+ * hashes. Only when a session has no header row (transcript-only) does the adapter fall back
+ * to the slug-walk project-path guess this file used to rely on for every session — see
+ * {@link projectPathFromSlug}.
  *
- * - the activity window comes from Cursor's own first/last recorded edit, falling back to the
- *   prompt stamps, and only then to the transcript file's birthtime/mtime — file times measure
- *   when the file was touched, so a conversation resumed days later would otherwise report a
- *   span of days rather than of minutes;
- * - messages are emitted deliberately WITHOUT timestamps, so the native loader falls back to
- *   the descriptor's window instead of a fabricated per-message clock;
+ * A transcript, when one exists, still supplies what neither store does: role-tagged text,
+ * tool_use blocks, turn markers, and a human-readable stamp on each prompt. It carries no model
+ * and no token counts. So:
+ *
+ * - the activity window prefers the header's own timestamps, then Cursor's recorded first/last
+ *   edit, then the prompt stamps, and only then the transcript file's birthtime/mtime — file
+ *   times measure when the file was touched, so a conversation resumed days later would
+ *   otherwise report a span of days rather than of minutes;
+ * - messages are emitted deliberately WITHOUT per-message timestamps, so the native loader
+ *   falls back to the descriptor's window instead of a fabricated per-message clock;
  * - `usageMeta.usageUnavailableReason` is always set, which is what makes the report render
  *   tokens and cost as unmeasurable rather than as a confident zero.
  *
- * Model, precise edit times, edited-file lists and the only trustworthy project path live in
- * Cursor's AI-tracking database. The adapter reads it once per run and joins on conversation
- * id — see {@link CursorSessionAdapter.setTrackingIndex}. When it is missing, locked, on a
- * runtime without `node:sqlite` or schema-drifted, the join simply finds nothing and every
- * session degrades to its transcript-only form.
+ * Model and edited-file lists still come from the AI-tracking database, joined by the same
+ * `composerId`/`conversationId` — see {@link CursorSessionAdapter.setTrackingIndex}. When
+ * either store is missing, locked, on a runtime without `node:sqlite`, or schema-drifted, the
+ * join simply finds nothing and the session degrades to whatever the remaining sources supply.
  *
- * Messages are emitted in the Claude-shaped `{type, message: {role, content}}` form on
- * purpose: `synthesizeRawSession` in `src/cli/commands/analytics/native-loader.ts` uses that
- * shape for its default branch, so Cursor needs no per-agent case there.
+ * Messages are emitted in the Claude-shaped `{type, message: {role, content}}` form (with
+ * `gitBranch` stamped alongside `message` — see {@link applyBranch}) on purpose:
+ * `synthesizeRawSession` in `src/cli/commands/analytics/native-loader.ts` uses that shape for
+ * its default branch, so Cursor needs no per-agent case there.
  *
  * Everything is read-only and fail-soft. A missing Cursor home yields zero sessions, never an
  * error — analytics for every other agent must survive Cursor not being installed.
@@ -53,6 +65,8 @@ import { CURSOR_AGENT_NAME } from './cursor.constants.js';
 import { getCursorProjectsRoot } from './cursor.paths.js';
 import type { CursorConversationActivity, CursorTrackingIndex } from './cursor.tracking-db.js';
 import { readCursorTrackingIndex } from './cursor.tracking-db.js';
+import type { CursorComposerHeader, CursorComposerIndex } from './cursor.state-db.js';
+import { readCursorComposerIndex } from './cursor.state-db.js';
 import type { CursorMessageLine, CursorTranscriptLine } from './cursor.transcript.js';
 import {
   contentBlocks,
@@ -282,6 +296,8 @@ function activityWindow(
 interface CursorNativeMessage {
   type: 'user' | 'assistant';
   message: { role: 'user' | 'assistant'; content: string; model?: string };
+  /** Top-level, sibling to `message` — where `synthesizeRawSession` reads `m.gitBranch` from. */
+  gitBranch?: string;
 }
 
 /**
@@ -309,6 +325,92 @@ function applyModels(messages: CursorNativeMessage[], models: string[]): void {
   models.slice(0, assistant.length).forEach((model, i) => {
     assistant[i].message.model = model;
   });
+}
+
+/**
+ * Stamp the header's real git branch onto every message — the only place the native loader's
+ * default synthesis looks (`messages.map((m) => m.gitBranch)`, mode-voted). One branch per
+ * conversation is all `composerHeaders` ever records, so every message carries the same value;
+ * unlike {@link applyModels} there is no multi-value case to spread across turns.
+ */
+function applyBranch(messages: CursorNativeMessage[], branch: string | undefined): void {
+  if (!branch) {
+    return;
+  }
+  for (const message of messages) {
+    message.gitBranch = branch;
+  }
+}
+
+/**
+ * When a conversation ran, preferring `composerHeaders`'s own timestamps over anything derived.
+ *
+ * A header can record only one end of the window (Cursor's own writes are not guaranteed
+ * complete either) — in that case the other end mirrors it rather than falling through to a
+ * weaker source for half the answer and a stronger one for the other half.
+ */
+function resolveWindow(
+  header: CursorComposerHeader | undefined,
+  filePath: string,
+  activity: CursorConversationActivity | undefined
+): { createdAt: number; updatedAt: number } | undefined {
+  if (header?.createdAt !== undefined || header?.updatedAt !== undefined) {
+    const createdAt = header.createdAt ?? header.updatedAt!;
+    const updatedAt = header.updatedAt ?? header.createdAt!;
+    return { createdAt, updatedAt: Math.max(createdAt, updatedAt) };
+  }
+  return activityWindow(filePath, activity);
+}
+
+/**
+ * The project path for a conversation: `composerHeaders`'s own `workspaceIdentifier.uri.fsPath`
+ * when the session has a header, with no slug-guessing needed at all — that is the whole point
+ * of discovering from `state.vscdb`. The slug walk only runs for a session that has a
+ * transcript but no header row, which is the one case left with nothing better to go on.
+ */
+function resolveProjectPath(
+  header: CursorComposerHeader | undefined,
+  slug: string | undefined,
+  activity: CursorConversationActivity | undefined,
+  cache: Map<string, string | undefined>
+): string | undefined {
+  if (header?.projectPath) {
+    return header.projectPath;
+  }
+  if (!slug) {
+    return undefined;
+  }
+  return projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, cache);
+}
+
+/**
+ * A single synthetic file operation carrying `composerHeaders`'s aggregate line counts.
+ *
+ * The database gives Cursor's own `totalLinesAdded`/`totalLinesRemoved` for the whole
+ * conversation, not a per-file breakdown — there is no real path to attach them to file by
+ * file. Rather than inventing per-file entries, one entry stands in for the session as a whole;
+ * its `path` is the resolved project path when known (a real, verified directory) or a
+ * synthetic id-keyed marker when not, purely because the aggregator drops any file operation
+ * with no `path` at all. `filesChangedCount` itself rides separately on `metrics` — see
+ * `ParsedSession.metrics.filesChangedCount` — because the aggregator's default files-changed
+ * count (distinct operation paths) cannot represent an aggregate with only one synthetic entry.
+ */
+function aggregateLinesFileOp(
+  header: CursorComposerHeader | undefined,
+  projectPath: string | undefined,
+  sessionId: string
+): NonNullable<ParsedSession['metrics']>['fileOperations'] {
+  if (header?.linesAdded === undefined && header?.linesRemoved === undefined) {
+    return [];
+  }
+  return [
+    {
+      type: 'edit',
+      path: projectPath ?? `cursor-session:${sessionId}`,
+      linesAdded: header.linesAdded ?? 0,
+      linesRemoved: header.linesRemoved ?? 0,
+    },
+  ];
 }
 
 /** What one transcript's lines amount to, once the shape Cursor writes is set aside. */
@@ -393,6 +495,53 @@ function slugOfTranscript(filePath: string): string {
   return basename(dirname(dirname(dirname(filePath))));
 }
 
+/**
+ * A stable, never-created path for a session discovered only through `composerHeaders` — no
+ * transcript exists for it on disk. `parseSessionFile` takes its conversation id from the
+ * path's own basename (`basename(filePath, '.jsonl')`), so this has to end in
+ * `<composerId>.jsonl` for that id round-trip to work like it does for a real transcript path;
+ * everything upstream of that (`readCursorTranscript`, `statSync` for the file-time fallback)
+ * already degrades to "no data" for a path that does not exist, so nothing downstream needs to
+ * know this path is synthetic.
+ */
+function virtualTranscriptPath(root: string, composerId: string): string {
+  return join(root, '.composer-only', composerId, `${composerId}.jsonl`);
+}
+
+/** One discovered transcript: where it lives, and the project slug it lives under. */
+interface DiscoveredTranscript {
+  filePath: string;
+  slug: string;
+}
+
+/**
+ * Every real transcript under `~/.cursor/projects`, keyed by conversation id.
+ *
+ * `projects/` also holds directories that are not projects at all (numeric window ids,
+ * `empty-window`) and project directories holding only `canvases`/`terminals`/`mcps`, so this
+ * keys on the presence of `agent-transcripts` rather than on the directory name — same rule the
+ * single-pass scan used before discovery split into "list transcripts" and "list headers".
+ */
+function findTranscripts(root: string): Map<string, DiscoveredTranscript> {
+  const found = new Map<string, DiscoveredTranscript>();
+  if (!existsSync(root)) {
+    return found;
+  }
+  for (const slug of readDirNames(root)) {
+    const transcriptsRoot = join(root, slug, TRANSCRIPTS_DIR);
+    if (!existsSync(transcriptsRoot)) {
+      continue;
+    }
+    for (const conversationId of readDirNames(transcriptsRoot)) {
+      const filePath = join(transcriptsRoot, conversationId, `${conversationId}.jsonl`);
+      if (existsSync(filePath)) {
+        found.set(conversationId, { filePath, slug });
+      }
+    }
+  }
+  return found;
+}
+
 export class CursorSessionAdapter implements SessionAdapter {
   readonly agentName = CURSOR_AGENT_NAME;
   private processors: SessionProcessor[] = [];
@@ -420,6 +569,13 @@ export class CursorSessionAdapter implements SessionAdapter {
    */
   private trackingIndexLoad?: Promise<CursorTrackingIndex>;
 
+  /**
+   * Enrichment from `state.vscdb`'s `composerHeaders` table, keyed by composerId — the primary
+   * session-discovery source (see the module doc comment). Memoized for the same reason as
+   * {@link trackingIndexLoad}: one adapter instance per process, one database read per run.
+   */
+  private composerIndexLoad?: Promise<CursorComposerIndex>;
+
   constructor(private readonly metadata: AgentMetadata) {}
 
   /**
@@ -445,6 +601,25 @@ export class CursorSessionAdapter implements SessionAdapter {
     return this.trackingIndexLoad;
   }
 
+  /**
+   * Attach the composer index directly — the `state.vscdb` counterpart of
+   * {@link setTrackingIndex}, for the same reasons (async load, test injection).
+   */
+  setComposerIndex(index: CursorComposerIndex): void {
+    this.composerIndexLoad = Promise.resolve(index);
+  }
+
+  /**
+   * The composer index, reading `state.vscdb` on first use.
+   *
+   * `readCursorComposerIndex` never throws — see its own contract — so a missing, locked or
+   * schema-drifted state database degrades discovery to transcript-only, not to zero sessions.
+   */
+  private async composerIndex(): Promise<CursorComposerIndex> {
+    this.composerIndexLoad ??= readCursorComposerIndex();
+    return this.composerIndexLoad;
+  }
+
   registerProcessor(processor: SessionProcessor): void {
     this.processors.push(processor);
     this.processors.sort((a, b) => a.priority - b.priority);
@@ -452,46 +627,56 @@ export class CursorSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Enumerate every agent transcript under `~/.cursor/projects`, newest first.
+   * Enumerate every discoverable Cursor session, newest first.
    *
-   * Discovery deliberately does not open transcripts: the file's own stat is enough to date
-   * and filter a session, so a run never pays to read a transcript it goes on to discard.
+   * Session identity is the union of two id sets: every composerId `state.vscdb`'s
+   * `composerHeaders` table has a (non-draft) row for, and every composerId with a real
+   * transcript under `~/.cursor/projects`. Most real sessions today have a header and no
+   * transcript; a small, shrinking set has a transcript with no header (schema drift, a pruned
+   * row) and falls all the way back to the pre-ADR-0001 slug walk. Neither set alone is
+   * discovery — see the module doc comment.
+   *
+   * Discovery deliberately does not open transcripts: a transcript file's own stat, or the
+   * header's own timestamps, are enough to date and filter a session, so a run never pays to
+   * read a transcript it goes on to discard.
    *
    * The descriptor — not the parsed session — is where enrichment has to land for timing and
    * project: Cursor messages carry no timestamps and no cwd, so the native loader's synthesis
    * falls back to `descriptor.createdAt` / `updatedAt` / `projectPath` for exactly those three
-   * facts. Applying the tracking window here also keeps the age cutoff and the reported window
+   * facts. Resolving the window here also keeps the age cutoff and the reported window
    * consistent with each other.
    */
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
     const root = getCursorProjectsRoot();
-    if (!existsSync(root)) {
-      logger.debug(`[cursor-discovery] no Cursor projects directory at ${root}`);
+    const transcripts = findTranscripts(root);
+    const [tracking, composerIndex] = await Promise.all([this.trackingIndex(), this.composerIndex()]);
+
+    if (transcripts.size === 0 && composerIndex.size === 0) {
+      logger.debug(`[cursor-discovery] no Cursor sessions found (no state database, no transcripts under ${root})`);
       return [];
     }
 
     const maxAgeDays = options?.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
     const cutoffMs = Date.now() - maxAgeDays * MS_PER_DAY;
-    const tracking = await this.trackingIndex();
 
+    const composerIds = new Set<string>([...transcripts.keys(), ...composerIndex.keys()]);
     const results: SessionDescriptor[] = [];
 
-    for (const slug of readDirNames(root)) {
-      const transcriptsRoot = join(root, slug, TRANSCRIPTS_DIR);
-      if (!existsSync(transcriptsRoot)) {
+    for (const composerId of composerIds) {
+      const descriptor = this.describeConversation(
+        root,
+        composerId,
+        composerIndex.get(composerId),
+        transcripts.get(composerId),
+        tracking
+      );
+      if (!descriptor || descriptor.createdAt < cutoffMs) {
         continue;
       }
-
-      for (const conversationId of readDirNames(transcriptsRoot)) {
-        const descriptor = this.describeConversation(transcriptsRoot, conversationId, slug, tracking);
-        if (!descriptor || descriptor.createdAt < cutoffMs) {
-          continue;
-        }
-        if (options?.cwd && !sameDir(descriptor.projectPath, options.cwd)) {
-          continue;
-        }
-        results.push(descriptor);
+      if (options?.cwd && !sameDir(descriptor.projectPath, options.cwd)) {
+        continue;
       }
+      results.push(descriptor);
     }
 
     results.sort((a, b) => b.createdAt - a.createdAt);
@@ -506,36 +691,30 @@ export class CursorSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * One conversation as a descriptor, or undefined when it has no transcript on disk.
+   * One conversation as a descriptor, or undefined when neither source can date it.
    *
    * The descriptor — not the parsed session — is where the project and the window have to land:
    * Cursor's messages carry no timestamps and no cwd, so the native loader's default synthesis
    * reads exactly those facts off the descriptor.
    */
   private describeConversation(
-    transcriptsRoot: string,
-    conversationId: string,
-    slug: string,
+    root: string,
+    composerId: string,
+    header: CursorComposerHeader | undefined,
+    transcript: DiscoveredTranscript | undefined,
     tracking: CursorTrackingIndex
   ): SessionDescriptor | undefined {
-    const filePath = join(transcriptsRoot, conversationId, `${conversationId}.jsonl`);
-    if (!existsSync(filePath)) {
-      return undefined;
-    }
-
-    // A conversation that exists only in the database has no transcript and never reaches this
-    // point — the transcript file is the sole source of session identity.
-    const activity = tracking.get(conversationId);
-    const window = activityWindow(filePath, activity);
+    const filePath = transcript?.filePath ?? virtualTranscriptPath(root, composerId);
+    const activity = tracking.get(composerId);
+    const window = resolveWindow(header, filePath, activity);
     if (!window) {
       return undefined;
     }
 
     return {
-      sessionId: conversationId,
+      sessionId: composerId,
       filePath,
-      projectPath:
-        projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, this.slugPaths),
+      projectPath: resolveProjectPath(header, transcript?.slug, activity, this.slugPaths),
       createdAt: window.createdAt,
       updatedAt: window.updatedAt,
       agentName: this.agentName,
@@ -543,24 +722,33 @@ export class CursorSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Parse one conversation transcript.
+   * Parse one conversation.
    *
-   * The conversation id is the file's own basename, which is also the key the AI-tracking
-   * database joins on, so no separate correlation step is needed.
+   * The conversation id is the file's own basename, which is also the key both the AI-tracking
+   * database and the composer index join on, so no separate correlation step is needed. A
+   * header-only session (see the module doc comment) has a synthetic, never-created `filePath`
+   * — `readCursorTranscript` and the file-time fallbacks all already degrade to "no data" for a
+   * path that does not exist, so nothing here needs a separate code path for that case except
+   * the slug walk, which has no slug to walk without a real transcript.
    */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     const conversationId = basename(filePath, '.jsonl');
-    const lines = readCursorTranscript(filePath);
-    const activity = (await this.trackingIndex()).get(conversationId);
+    const hasTranscript = existsSync(filePath);
+    const lines = hasTranscript ? readCursorTranscript(filePath) : [];
+    const [activity, composerIndex] = await Promise.all([
+      this.trackingIndex().then((index) => index.get(conversationId)),
+      this.composerIndex(),
+    ]);
+    const header = composerIndex.get(conversationId);
 
     const { messages, userPrompts, tools } = flattenTranscript(lines);
 
     applyModels(messages, activity?.models ?? []);
+    applyBranch(messages, header?.branch);
 
-    const window = activityWindow(filePath, activity);
-    const slug = slugOfTranscript(filePath);
-    const projectPath =
-      projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, this.slugPaths);
+    const window = resolveWindow(header, filePath, activity);
+    const slug = hasTranscript ? slugOfTranscript(filePath) : undefined;
+    const projectPath = resolveProjectPath(header, slug, activity, this.slugPaths);
 
     logger.debug(
       `[cursor-adapter] ${conversationId}: ${messages.length} message(s), ${userPrompts.length} prompt(s)`
@@ -573,6 +761,7 @@ export class CursorSessionAdapter implements SessionAdapter {
         projectPath,
         createdAt: window === undefined ? undefined : new Date(window.createdAt).toISOString(),
         updatedAt: window === undefined ? undefined : new Date(window.updatedAt).toISOString(),
+        branch: header?.branch,
       },
       // No per-message timestamps exist, and inventing them would make the report show a
       // duration Cursor never recorded. Leaving them out makes the loader fall back to the
@@ -584,7 +773,11 @@ export class CursorSessionAdapter implements SessionAdapter {
       metrics: {
         tools,
         userPrompts,
-        fileOperations: fileOperationsFrom(activity),
+        fileOperations: [
+          ...(fileOperationsFrom(activity) ?? []),
+          ...(aggregateLinesFileOp(header, projectPath, sessionId) ?? []),
+        ],
+        filesChangedCount: header?.filesChangedCount,
       },
     };
   }

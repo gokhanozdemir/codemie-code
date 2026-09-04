@@ -6,6 +6,13 @@ export {
   CURSOR_DISPLAY_NAME,
 } from './cursor.constants.js';
 export { CursorSessionAdapter } from './cursor.session.js';
-export { getCursorHome, getCursorProjectsRoot, getCursorTrackingDbPath } from './cursor.paths.js';
+export {
+  getCursorHome,
+  getCursorProjectsRoot,
+  getCursorTrackingDbPath,
+  getCursorStateDbPath,
+} from './cursor.paths.js';
 export { readCursorTrackingIndex } from './cursor.tracking-db.js';
 export type { CursorConversationActivity, CursorTrackingIndex } from './cursor.tracking-db.js';
+export { readCursorComposerIndex } from './cursor.state-db.js';
+export type { CursorComposerHeader, CursorComposerIndex } from './cursor.state-db.js';
