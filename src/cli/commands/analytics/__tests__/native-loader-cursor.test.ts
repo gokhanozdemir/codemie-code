@@ -549,3 +549,20 @@ describe('loadNativeSessions — Cursor activity window from transcript timestam
     expect(cursorRows(rows)[0].startEvent!.data.startTime).toBeGreaterThan(0);
   });
 });
+
+/**
+ * `/`, `_` and `-` all slugify to `-`, so one slug can describe two directories that both
+ * exist. Guessing between them would attribute a session confidently to the wrong project,
+ * which is worse than the honest gap of reporting none.
+ */
+describe('loadNativeSessions — Cursor refuses to guess between equally valid projects', () => {
+  it('reports no project when two directories share the slug', async () => {
+    mkdirSync(join(projectDir, 'my_app'), { recursive: true });
+    mkdirSync(join(projectDir, 'my-app'), { recursive: true });
+    writeTranscript('conv-ambiguous', conversation('ship it'), slugForPath(join(projectDir, 'my-app')));
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.workingDirectory).toBe('Unknown');
+  });
+});

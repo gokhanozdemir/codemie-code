@@ -94,11 +94,14 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 
 /**
  * The stamp Cursor writes ahead of every prompt, e.g.
- * `Monday, Aug 31, 2026, 5:46 PM (UTC+3)`. The weekday is ignored — it carries no information
- * the date does not — and the explicit offset is what makes the instant unambiguous.
+ * `<timestamp>Monday, Aug 31, 2026, 5:46 PM (UTC+3)</timestamp>`. The weekday is ignored — it
+ * carries no information the date does not — and the explicit offset is what makes the instant
+ * unambiguous. The `<timestamp>` wrapper is part of the pattern on purpose: a bare date shape
+ * also occurs in pasted logs and model output, and matching those would date the session by
+ * whatever text it happened to quote.
  */
 const STAMP_PATTERN =
-  /([A-Z][a-z]{2})\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*\(UTC([+-]\d{1,2})(?::(\d{2}))?\)/gi;
+  /<timestamp>[^<]*?([A-Z][a-z]{2})\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*\(UTC([+-]\d{1,2})(?::(\d{2}))?\)[^<]*?<\/timestamp>/gi;
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
