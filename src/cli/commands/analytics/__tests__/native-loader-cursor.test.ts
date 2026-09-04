@@ -156,7 +156,7 @@ interface SeamRun {
  * Load native sessions the way `SessionsSource` does, but with only the Cursor adapter (plus an
  * optional managed-agent contrast row) behind the discovery dependency.
  */
-async function runLoader(options: { withManagedClaude?: boolean } = {}): Promise<SeamRun> {
+async function runLoader(options: { withManagedClaude?: boolean; owned?: boolean } = {}): Promise<SeamRun> {
   vi.resetModules();
   const { AgentRegistry } = await import('../../../../agents/registry.js');
   const { loadNativeSessions } = await import('../native-loader.js');
@@ -186,7 +186,7 @@ async function runLoader(options: { withManagedClaude?: boolean } = {}): Promise
       return session;
     },
     realPath: (p) => p,
-    hasOwnershipMarker: () => false,
+    hasOwnershipMarker: () => options.owned === true,
   };
 
   return { rows: await loadNativeSessions(undefined, deps), parsed };
@@ -239,26 +239,39 @@ describe('loadNativeSessions — Cursor discovery and unmanaged tagging', () => 
     expect(cursorRows(rows)).toHaveLength(1);
   });
 
-  it('tags Cursor sessions native-unmanaged, not native-external', async () => {
+  it('tags a Cursor session CodeMie did not launch as native-external', async () => {
     writeTranscript('conv-a', conversation('add cursor analytics'));
 
     const { rows } = await runLoader();
 
-    expect(cursorRows(rows)[0].startEvent!.data.provider).toBe('native-unmanaged');
+    expect(cursorRows(rows)[0].startEvent!.data.provider).toBe('native-external');
   });
 
-  it('shows Cursor sessions without --include-external, unlike a managed agent’s native session', async () => {
+  it('hides Cursor sessions until --include-external, exactly like a managed agent’s', async () => {
     writeTranscript('conv-a', conversation('add cursor analytics'));
 
     const { rows } = await runLoader({ withManagedClaude: true });
 
-    // The unowned Claude row is the contrast: managed agent, so it is gated behind the flag.
+    // One rule for every agent: no ownership marker means external, flag or nothing.
     expect(rows.find((s) => s.sessionId === 'cl1')!.startEvent!.data.provider).toBe('native-external');
 
     const byDefault = visible(rows, false).map((s) => s.sessionId);
-    expect(byDefault).toContain('conv-a');
+    expect(byDefault).not.toContain('conv-a');
     expect(byDefault).not.toContain('cl1');
-    expect(visible(rows, true).map((s) => s.sessionId)).toContain('cl1');
+
+    const withFlag = visible(rows, true).map((s) => s.sessionId);
+    expect(withFlag).toContain('conv-a');
+    expect(withFlag).toContain('cl1');
+  });
+
+  it('shows a Cursor session CodeMie set up, with no flag', async () => {
+    writeTranscript('conv-a', conversation('add cursor analytics'));
+
+    // An ownership marker is what proves CodeMie launched it; the gate then does not apply.
+    const { rows } = await runLoader({ owned: true });
+
+    expect(cursorRows(rows)[0].startEvent!.data.provider).toBe('native');
+    expect(visible(rows, false).map((s) => s.sessionId)).toContain('conv-a');
   });
 
   it('carries the transcript’s prompts and turns onto the synthesized row', async () => {

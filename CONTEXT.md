@@ -13,12 +13,8 @@ An agent CodeMie never installs or launches but whose locally persisted sessions
 _Avoid_: external agent, ingestion-only agent
 
 **External session**:
-A session of a *managed* agent that was run outside CodeMie and carries no CodeMie ownership marker (provider tag `native-external`). Hidden by default; shown with `--include-external`.
+A session CodeMie did not launch, so it carries no ownership marker (provider tag `native-external`). Applies to every agent alike, managed or analytics-only. Hidden by default; shown with `--include-external`.
 _Avoid_: unmanaged session, foreign session
-
-**Unmanaged session**:
-A session of an *analytics-only* agent (provider tag `native-unmanaged`). Always shown; no flag required.
-_Avoid_: external session
 
 **Ownership marker**:
 The sidecar record in `~/.codemie/sessions/` that proves CodeMie launched a given agent session; its absence is what makes a managed agent's session external.
