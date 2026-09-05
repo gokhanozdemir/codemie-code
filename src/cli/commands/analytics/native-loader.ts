@@ -31,26 +31,10 @@ import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prom
 import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
 
 /** Agents whose native logs we discover + synthesize. */
-const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
+const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini', 'cursor'] as const;
 
 function isPiAgent(agentName: string): boolean {
   return agentName.toLowerCase() === 'pi';
-}
-
-/**
- * Agents CodeMie only reads analytics for and never installs, launches, or manages.
- *
- * The ownership gate below exists to stop analytics silently counting UNMANAGED runs of an
- * agent CodeMie CAN manage (EPMCDME-13367). A truly analytics-only agent has no managed
- * variant, so it can never carry an ownership marker — applying the gate would tag 100% of
- * its sessions `native-external` and drop them from the default report.
- */
-function isAnalyticsOnlyAgent(agentName: string): boolean {
-  try {
-    return AgentRegistry.getAgent(agentName)?.metadata.analyticsOnly === true;
-  } catch {
-    return false;
-  }
 }
 
 /** A discovered native session paired with its agent. */
@@ -363,6 +347,7 @@ function buildNativeRawSession(
     tools: parsed.metrics?.tools ?? {},
     toolStatus: parsed.metrics?.toolStatus,
     fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
+    ...(parsed.metrics?.filesChangedCount !== undefined && { filesChangedCount: parsed.metrics.filesChangedCount }),
     models,
     // Named invocations are extracted at parse time (e.g. claude.session.ts extractMetrics);
     // carry them through so native (untracked) sessions populate the skill/agent/command charts.
@@ -572,7 +557,13 @@ export function synthesizeRawSession(
 
   return buildNativeRawSession(agentName, descriptor, parsed, {
     cwd: messages.find((m) => m.cwd)?.cwd ?? descriptor.projectPath ?? 'Unknown',
-    branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)),
+    // Per-message gitBranch is the primary signal (it can change mid-session, so a mode vote is
+    // the honest summary) — but a session that recorded no messages at all (e.g. a Cursor
+    // conversation known only through composerHeaders, with no matching transcript) has nothing
+    // to vote over. `parsed.metadata.branch` is where an adapter puts a session-level branch it
+    // knows some other way; falling back to it here is what lets such a session still report a
+    // branch instead of silently losing one.
+    branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)) ?? parsed.metadata.branch,
     startTime: timestamps.length ? Math.min(...timestamps) : descriptor.createdAt,
     endTime: timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt,
     turns: Math.max(assistantMsgs.length, 1),
@@ -749,15 +740,13 @@ export async function loadNativeSessions(
       continue;
     }
     const raw = synthesizeRawSession(agentName, descriptor, parsed);
+    // One rule for every agent: a session CodeMie cannot prove it launched is external, and
+    // external sessions are opt-in behind `--include-external`. That holds for analytics-only
+    // agents too — CodeMie did not run them, so the default report does not claim them. Set one
+    // up through CodeMie and its sessions carry an ownership marker, keeping the plain 'native'
+    // tag that means "CodeMie launched this" and showing with no flag.
     if (raw.startEvent && !deps.hasOwnershipMarker(descriptor.filePath)) {
-      // Truly analytics-only agents can never carry an ownership marker, so tagging them
-      // 'native-external' would drop 100% of their sessions from the default report. They
-      // still are not CodeMie-managed, so they get their own tag rather than the plain
-      // 'native' that means "CodeMie launched this". Managed agents, including Copilot CLI,
-      // remain 'native-external' when their transcript lacks CodeMie ownership.
-      raw.startEvent.data.provider = isAnalyticsOnlyAgent(agentName)
-        ? 'native-unmanaged'
-        : 'native-external';
+      raw.startEvent.data.provider = 'native-external';
     }
     out.push(raw);
   }

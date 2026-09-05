@@ -63,6 +63,15 @@ export interface ParsedSession {
     usagePartial?: boolean;
     /** Why this session has no usage data; absent when usage was found. */
     usageUnavailableReason?: string;
+    /**
+     * Session-level token totals for an agent whose native format has no per-message usage
+     * the standard per-agent readers in `cost/usage-readers.ts` can walk (e.g. Cursor's
+     * transcript carries no tokens at all — real counts only exist per-turn in a separate
+     * store, unaligned with transcript messages). The cost enricher prices this directly
+     * instead of routing it through a per-message reader; combine with `usagePartial: true`
+     * when the totals are known to be incomplete rather than an authoritative rollup.
+     */
+    tokensByModel?: Record<string, { inputTokens: number; outputTokens: number }>;
   };
 
   // Parsed metrics data (optional - for metrics processor)
@@ -78,6 +87,8 @@ export interface ParsedSession {
       linesAdded?: number;
       linesRemoved?: number;
     }>;
+    // Aggregate files-changed count for adapters that know the total but not individual paths (e.g. Cursor's composerHeaders); when set, this overrides the path-derived count instead of being redundant with it.
+    filesChangedCount?: number;
     // Named invocation breakdowns (skill names, agent subtypes, slash commands)
     skillInvocations?: Record<string, number>;
     agentInvocations?: Record<string, number>;
