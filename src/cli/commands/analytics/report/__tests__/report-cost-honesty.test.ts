@@ -88,3 +88,30 @@ describe('report client all-unmeasurable empty state', () => {
     expect(toolBlock).not.toMatch(/usageUnknown|anyMeasured/);
   });
 });
+
+/**
+ * Cursor Team Analytics is a remote, opt-in source. The report must keep it visibly apart from
+ * local sessions — it has no session key to join on and no token/cost fields to join with.
+ */
+describe('Cursor Team Analytics section separation', () => {
+  const view = viewSource('cursorteam');
+
+  it('renders from meta, never from the session list', () => {
+    expect(view).toMatch(/DATA\.meta\.cursorTeamAnalytics/);
+    // The view takes no session array and must not reach for one.
+    expect(view).toMatch(/VIEWS\.cursorteam = function \(host\)/);
+    expect(view).not.toMatch(/DATA\.sessions|SESSION_BY_ID|filtered\(\)/);
+  });
+
+  it('contributes nothing to any cost or token figure', () => {
+    expect(view).not.toMatch(/costUSD|fmtUSD|fmtTokens/);
+  });
+
+  it('says plainly that the remote rows are not joined to local sessions', () => {
+    expect(view).toMatch(/nothing here is joined to the local sessions/);
+  });
+
+  it('flags a partial pull rather than presenting it as complete', () => {
+    expect(view).toMatch(/failedEndpoints/);
+  });
+});
