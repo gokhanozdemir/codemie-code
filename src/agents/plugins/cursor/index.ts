@@ -16,3 +16,5 @@ export { readCursorTrackingIndex } from './cursor.tracking-db.js';
 export type { CursorConversationActivity, CursorTrackingIndex } from './cursor.tracking-db.js';
 export { readCursorComposerIndex } from './cursor.state-db.js';
 export type { CursorComposerHeader, CursorComposerIndex } from './cursor.state-db.js';
+export { readCursorBubbles } from './cursor.bubbles.js';
+export type { CursorBubbleSummary } from './cursor.bubbles.js';
