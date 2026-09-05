@@ -59,7 +59,7 @@ interface CodeMieLlmModel {
  * opus the gateway actually serves, so Desktop never shows more than one Opus.
  */
 export const PREFERRED_CLAUDE_MODELS = [
-  'claude-sonnet-4-6',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
