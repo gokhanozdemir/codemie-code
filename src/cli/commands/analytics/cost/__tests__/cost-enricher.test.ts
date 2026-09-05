@@ -255,7 +255,10 @@ describe('enrichCosts', () => {
     };
     const { index, summary } = await enrichCosts(raw, deps);
     expect(index.get('s1')!.priced).toBe(true);
-    expect(index.get('s1')!.costUSD).toBe(0);
+    // Real tokens with no matching price row are estimated at the stand-in rate and badged,
+    // rather than reported as $0 (issue 02); the model is still listed as unpriced.
+    expect(index.get('s1')!.costUSD).toBeGreaterThan(0);
+    expect(index.get('s1')!.usagePartial).toBe(true);
     expect(summary.unpricedModels).toContain('no-such-model-xyz');
   });
 
@@ -609,5 +612,61 @@ describe('buildCostSeries', () => {
     expect(s[0].t).toBe(1);
     expect(s[s.length - 1].t).toBe(200);
     expect(s[s.length - 1].tokens).toBe(200); // last cumulative total preserved
+  });
+});
+
+/**
+ * Sessions that recovered real tokens but whose model is absent from the price table
+ * (Cursor reports `default`/Auto) still deserve an API-equivalent estimate — a blank is
+ * less honest than a labelled floor. See issue 02 of the cursor-analytics-cost-honesty spec.
+ */
+describe('unpriced-model cost estimation', () => {
+  /** An adapter that supplies session-level `tokensByModel` instead of per-message usage (the Cursor shape). */
+  const adapterTokens = (tokensByModel: Record<string, { inputTokens: number; outputTokens: number }>): EnricherDeps => ({
+    ...baseDeps,
+    parseNative: async () => ({ sessionId: 's1', agentName: 'cursor', metadata: {}, messages: [], usageMeta: { tokensByModel } }) as never,
+  });
+
+  it('estimates an Auto/unpriced model at the Sonnet stand-in rate without renaming the model', async () => {
+    const { index, summary } = await enrichCosts(raw, adapterTokens({ default: { inputTokens: 1_000_000, outputTokens: 0 } }));
+    const c = index.get('s1')!;
+    expect(c.costUSD).toBeCloseTo(3, 6); // 1M input @ $3/1M — the claude-sonnet-4 stand-in
+    expect(c.usagePartial).toBe(true);
+    expect(c.perModel[0].model).toBe('default'); // NOT renamed to a Claude model
+    expect(c.perModel[0].estimated).toBe(true);
+    // Coverage diagnostics must still confess the model had no real price.
+    expect(c.perModel[0].unpriced).toBe(true);
+    expect(summary.unpricedModels).toContain('default');
+    expect(c.priced).toBe(true); // "had recoverable usage"
+  });
+
+  it('prefers a real price when the model is in the table', async () => {
+    const { index } = await enrichCosts(raw, adapterTokens({ 'claude-opus-4-1': { inputTokens: 1_000_000, outputTokens: 0 } }));
+    const c = index.get('s1')!;
+    expect(c.costUSD).toBeGreaterThan(3.5); // opus input rate, not the $3 sonnet stand-in
+    expect(c.perModel[0].unpriced).toBe(false);
+    expect(c.perModel[0].estimated).toBeFalsy();
+    expect(c.usagePartial).toBeFalsy(); // a real price is not a partial estimate
+  });
+
+  it('fabricates no estimate for an unpriced model with zero tokens', async () => {
+    const { index, summary } = await enrichCosts(raw, adapterTokens({ default: { inputTokens: 0, outputTokens: 0 } }));
+    const c = index.get('s1')!;
+    expect(c.costUSD).toBe(0);
+    expect(c.perModel[0].estimated).toBeFalsy();
+    expect(c.usagePartial).toBeFalsy();
+    expect(summary.totalCostUSD).toBe(0);
+  });
+
+  it('leaves a session with no token signal at all unmeasurable', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () => ({ sessionId: 's1', agentName: 'cursor', metadata: {}, messages: [], usageMeta: { usageUnavailableReason: 'no token telemetry' } }) as never,
+    };
+    const c = (await enrichCosts(raw, deps)).index.get('s1')!;
+    expect(c.costUSD).toBe(0);
+    expect(c.priced).toBe(false);
+    expect(c.usageUnavailableReason).toBe('no token telemetry');
+    expect(c.usagePartial).toBeFalsy();
   });
 });
