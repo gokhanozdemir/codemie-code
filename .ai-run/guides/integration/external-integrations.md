@@ -300,6 +300,51 @@ Catalog-agnostic thin wrapper around the upstream `skills` npm CLI. Discovery, r
 
 ---
 
+## Cursor Integration (analytics-only)
+
+Cursor is read, never managed: `analyticsOnly: true`, no npm package, no CLI command, no provider
+mapping. `codemie analytics` discovers Cursor Agent conversations from Cursor's local stores —
+`state.vscdb` (`composerHeaders` for discovery, `cursorDiskKV` for per-turn enrichment),
+`~/.cursor/projects/<slug>/agent-transcripts/`, and `~/.cursor/ai-tracking/ai-code-tracking.db` —
+all read-only and all fail-soft. `CURSOR_HOME` relocates every one of them. Cursor sessions are
+tagged `native-external` and appear only with `--include-external`.
+
+Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
+undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
+
+### Cursor Enterprise Team Analytics API (not integrated)
+
+Cursor publishes an official Team Analytics API
+(<https://cursor.com/docs/account/teams/analytics-api>). **CodeMie does not integrate it today.**
+It is recorded here as a known, deferred capability so the constraints below are not re-derived —
+or, worse, so nothing is wired up that silently makes network calls.
+
+What the API is:
+
+- **Enterprise-team-only** and gated on an **admin-scoped API key**. An individual user on a
+  personal plan cannot use it at all.
+- Documented endpoints: `agent-edits`, `tabs`, `dau`, `models`, `commands`,
+  `conversation-insights`, `leaderboard`, `bugbot`.
+- **None of these endpoints returns token or cost fields at any tier.** The API cannot fill
+  CodeMie's biggest Cursor gap.
+
+Agreed constraints for any future integration:
+
+- **Trigger model.** A configured token alone must never enable network calls. Both the token
+  *and* an explicit opt-in flag at invocation are required, mirroring how `--include-external`
+  gates external sessions. Reading local files is a promise CodeMie already makes; calling a
+  remote service is not, and must stay an explicit act.
+- **Data scope.** User-wide only: the `by-user` endpoints filtered to the requesting user's own
+  email. Not team-wide data, not the leaderboard. CodeMie analytics reports the operator's own
+  usage, and pulling colleagues' activity into it is out of scope.
+- **Unsolved reconciliation problem.** The API returns per-user/per-date aggregates with **no
+  join key to a local `composerId`-keyed session**. There is therefore no way to enrich
+  `ReportSessionRecord` rows with it. Any integration would have to render a **separate summary
+  section**, clearly labelled as team-API data, rather than merging into the session table —
+  attempting the merge would silently double-count or mis-attribute.
+
+Full context: ADR 0001, [`docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`](../../../docs/adr/0001-cursor-session-discovery-from-state-vscdb.md).
+
 ## Configuration Validation
 
 Validate provider config at startup; warn (not throw) on connectivity failures. `file:src/env/config-loader.ts:150-170`
@@ -322,6 +367,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 | LiteLLM connection error | Proxy not running | `litellm --port 4000` |
 | OpenCode not found | Not installed | `codemie install opencode` |
 | OpenCode sessions not syncing | Metrics processing failed | `codemie opencode-metrics --discover --verbose` |
+| No Cursor sessions in analytics | Cursor sessions are external | Re-run with `--include-external`; see `docs/CURSOR_INTEGRATION.md` |
 | Codex sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Auto-reconciled on next codex run via `codex.reconciliation.ts` |
 | Codex `money_spent` is 0 | Backend `cost_config` missing model entry | Add model pricing in backend `cost_config` |
 
@@ -334,6 +380,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 - OpenCode plugin: `src/agents/plugins/opencode/`
 - Codex plugin: `src/agents/plugins/codex/`
 - Claude plugin: `src/agents/plugins/claude/`
+- Cursor plugin: `src/agents/plugins/cursor/` (guide: `docs/CURSOR_INTEGRATION.md`, ADR: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`)
 - MCP proxy: `src/mcp/`
 - Session adapters: `src/agents/core/session/`
 - Config loader: `src/env/config-loader.ts`
