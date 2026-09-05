@@ -252,7 +252,16 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-haiku-4-5']);
+    expect(models).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-opus-3',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ]);
   });
 
   it('throws when response is not ok', async () => {
@@ -341,9 +350,9 @@ describe('selectPreferredClaudeModels', () => {
 
   it('returns exact matches when present and dated fallbacks otherwise', () => {
     expect(selectPreferredClaudeModels(available)).toEqual([
-      'claude-sonnet-4-6',        // exact
       'claude-opus-4-7',          // exact
       'claude-opus-4-6-20260205', // dated fallback
+      'claude-sonnet-4-6',        // exact
       'claude-haiku-4-5-20251001',// dated fallback
     ]);
   });
@@ -383,8 +392,8 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-8',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
     ]);
   });
@@ -397,8 +406,8 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-7',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
     ]);
   });
@@ -500,8 +509,8 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
@@ -517,8 +526,8 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });

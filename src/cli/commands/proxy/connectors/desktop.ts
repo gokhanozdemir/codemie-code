@@ -54,15 +54,18 @@ interface CodeMieLlmModel {
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
  *
- * The opus entries are listed in descending preference (`4-8 → 4-7 → 4-6`):
+ * The opus entries are listed in descending preference (`5 → 4-8 → 4-7 → 4-6 → 3`):
  * {@link selectDesktopClaudeModels} collapses them to the single highest-priority
  * opus the gateway actually serves, so Desktop never shows more than one Opus.
  */
 export const PREFERRED_CLAUDE_MODELS = [
-  'claude-sonnet-4-6',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-opus-3',
+  'claude-sonnet-5',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5',
 ] as const;
 
@@ -226,8 +229,8 @@ export function selectPreferredClaudeModels(
  *
  * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
  * then collapses the opus family to a single entry: the first (highest-priority)
- * opus that resolved. With opus ids ordered `4-8 → 4-7 → 4-6` in
- * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 4.8 when the gateway serves
+ * opus that resolved. With opus ids ordered `5 → 4-8 → 4-7 → 4-6 → 3` in
+ * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 5 when the gateway serves
  * it and otherwise falls back to the next-best available opus. Non-opus models
  * are passed through untouched and order is preserved.
  */
