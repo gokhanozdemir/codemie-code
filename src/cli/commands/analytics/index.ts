@@ -189,9 +189,10 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         if (!cursorTeamAnalytics) {
           // Do NOT tell an ordinary team member to go set an admin API key — they cannot get
           // one, and it would not carry tokens or cost even if they could. Point at the CSV.
-          console.log(chalk.yellow('\n  Cursor Team Analytics returned nothing. It is available to enterprise team ADMINS only,'));
-          console.log(chalk.yellow('  and it never returns tokens or cost. For real Cursor tokens and cost, export your usage'));
-          console.log(chalk.yellow('  from the Cursor dashboard (Usage → Export) and pass it with --cursor-usage-csv <path>.'));
+          const { TEAM_ANALYTICS_AUDIENCE, TEAM_ANALYTICS_MEMBER_HINT } = await import('@/agents/plugins/cursor/cursor.team-analytics.js');
+          console.log(chalk.yellow(`\n  Cursor Team Analytics returned nothing. ${TEAM_ANALYTICS_AUDIENCE}`));
+          console.log(chalk.yellow('  It also never returns tokens or cost, so it cannot answer "what did Cursor cost?".'));
+          console.log(chalk.yellow(`  ${TEAM_ANALYTICS_MEMBER_HINT}`));
           console.log(chalk.dim('  Report continues without the Team Analytics section.'));
         }
       }

@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { fetchCursorTeamAnalytics, TEAM_ANALYTICS_ENDPOINTS, type TeamAnalyticsRequest } from '../cursor.team-analytics.js';
+import {
+  fetchCursorTeamAnalytics,
+  TEAM_ANALYTICS_ENDPOINTS,
+  TEAM_ANALYTICS_AUDIENCE,
+  TEAM_ANALYTICS_MEMBER_HINT,
+  type TeamAnalyticsRequest,
+} from '../cursor.team-analytics.js';
 
 /** A fetch stand-in that records every URL it was asked for. */
 function recordingFetch(handler?: (url: string) => { status?: number; body?: unknown }) {
@@ -100,5 +106,22 @@ describe('Cursor Team Analytics results', () => {
   it('survives a transport-level throw', async () => {
     const impl = async () => { throw new Error('ENOTFOUND api.cursor.com'); };
     expect(await fetchCursorTeamAnalytics(enabled, { fetch: impl as never })).toBeNull();
+  });
+});
+
+/**
+ * Team Analytics is an enterprise-ADMIN feature that returns no tokens or cost. An ordinary team
+ * member cannot obtain the key and would gain nothing from it, so no surface may imply otherwise
+ * or leave them at an auth-failure dead end. See issue #23.
+ */
+describe('Cursor Team Analytics audience framing', () => {
+  it('describes itself as admin-only and disclaims tokens/cost', () => {
+    expect(TEAM_ANALYTICS_AUDIENCE).toMatch(/admin/i);
+    expect(TEAM_ANALYTICS_AUDIENCE).not.toMatch(/token|cost/i);
+  });
+
+  it('points a member at the usage CSV rather than at getting an API key', () => {
+    expect(TEAM_ANALYTICS_MEMBER_HINT).toMatch(/--cursor-usage-csv/);
+    expect(TEAM_ANALYTICS_MEMBER_HINT).not.toMatch(/CURSOR_TEAM_ANALYTICS_API_KEY/);
   });
 });

@@ -7,10 +7,17 @@
  * gated on BOTH an explicit invocation flag and a configured credential — a token sitting in
  * config must never be enough on its own.
  *
- * What the API does and does not give us: none of the documented endpoints returns token or
- * cost fields at any tier (re-verified 2026-09-05), so this cannot close the Cursor billable-
- * token gap and must never be presented as if it did. The rows below are edit/activity
- * aggregates only. They are also per-user/per-date aggregates carrying no `composerId`, so
+ * Two things about the audience, because getting them wrong strands people:
+ *
+ * 1. **This is enterprise-team-ADMIN only.** The endpoints require an admin-scoped key that an
+ *    ordinary team member cannot obtain. Telling a member to "set CURSOR_TEAM_ANALYTICS_API_KEY"
+ *    sends them after a credential they cannot get.
+ * 2. **It returns no tokens and no cost at any tier** (re-verified against the live docs
+ *    2026-09-05), so even an admin cannot close the Cursor billable-usage gap with it. The rows
+ *    below are edit/activity aggregates only.
+ *
+ * The path that *does* yield real Cursor tokens and cost — for admins and members alike — is the
+ * dashboard usage export, imported via `--cursor-usage-csv` (see `cursor.usage-csv.ts`). They are also per-user/per-date aggregates carrying no `composerId`, so
  * there is no key on which to join them to local sessions — hence the report renders them as a
  * clearly separate section rather than folding them into the session table.
  *
@@ -33,6 +40,17 @@ export const TEAM_ANALYTICS_ENDPOINTS = [
   { endpoint: 'models', label: 'Models used' },
   { endpoint: 'commands', label: 'Commands' },
 ] as const;
+
+/** Who can actually use this. Surfaced in CLI help and the report's empty state. */
+export const TEAM_ANALYTICS_AUDIENCE =
+  'Enterprise team admins only — requires an admin-scoped Cursor Team API key.';
+
+/**
+ * What to tell everyone else. Deliberately does NOT name the API key env var: a member who
+ * cannot get a key must be pointed at the path that works, not at the one that will reject them.
+ */
+export const TEAM_ANALYTICS_MEMBER_HINT =
+  'For real Cursor tokens and cost, export your usage from the Cursor dashboard (Usage → Export) and pass it with --cursor-usage-csv <path>.';
 
 export interface TeamAnalyticsRequest {
   /** Explicit per-invocation opt-in (the CLI flag). A credential alone must never enable calls. */
