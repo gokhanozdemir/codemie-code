@@ -23,7 +23,9 @@ export function createAnalyticsCommand(): Command {
   applyCommonOptions(command)
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
     .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
-    .option('--cursor-team-analytics', 'Fetch your own Cursor Team Analytics aggregates (requires CURSOR_TEAM_ANALYTICS_API_KEY; makes a network call)')
+    .option('--cursor-team-analytics', 'ENTERPRISE TEAM ADMINS ONLY: fetch Cursor Team Analytics edit/activity aggregates (requires an admin-scoped CURSOR_TEAM_ANALYTICS_API_KEY; makes a network call). Returns no tokens or cost — for those, use --cursor-usage-csv')
+    .option('--cursor-usage-csv <path>', 'Import a Cursor usage-events CSV (Cursor dashboard → Usage → Export) for real Cursor tokens and cost. No network call')
+    .option('--cursor-usage-user <email>', 'Which User column value to keep from --cursor-usage-csv (default: your configured CodeMie email)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -185,7 +187,34 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
           ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
         })) ?? undefined;
         if (!cursorTeamAnalytics) {
-          console.log(chalk.dim('\n  Cursor Team Analytics unavailable (needs CURSOR_TEAM_ANALYTICS_API_KEY, a configured email, and an enterprise team). Report continues without it.'));
+          // Do NOT tell an ordinary team member to go set an admin API key — they cannot get
+          // one, and it would not carry tokens or cost even if they could. Point at the CSV.
+          console.log(chalk.yellow('\n  Cursor Team Analytics returned nothing. It is available to enterprise team ADMINS only,'));
+          console.log(chalk.yellow('  and it never returns tokens or cost. For real Cursor tokens and cost, export your usage'));
+          console.log(chalk.yellow('  from the Cursor dashboard (Usage → Export) and pass it with --cursor-usage-csv <path>.'));
+          console.log(chalk.dim('  Report continues without the Team Analytics section.'));
+        }
+      }
+
+      // #21: the member path to real Cursor tokens/cost. Pure file read — no network call.
+      let cursorUsage;
+      if (options.cursorUsageCsv) {
+        const { loadCursorUsageCsv } = await import('@/agents/plugins/cursor/cursor.usage-csv.js');
+        const wantedUser = options.cursorUsageUser ?? userEmail;
+        cursorUsage = loadCursorUsageCsv(options.cursorUsageCsv, {
+          ...(wantedUser !== undefined && { userEmail: wantedUser }),
+        }) ?? undefined;
+        if (!cursorUsage) {
+          console.log(chalk.yellow(`\n  Could not read a Cursor usage export from ${options.cursorUsageCsv}. Report continues without it.`));
+        } else if (cursorUsage.events.length === 0) {
+          // The Cursor account's email is frequently NOT the CodeMie config email, which would
+          // otherwise silently filter every row away and look like an empty export.
+          console.log(chalk.yellow(`\n  Cursor usage export matched no rows for ${wantedUser ?? '(no email configured)'}.`));
+          if (cursorUsage.usersInFile.length) {
+            console.log(chalk.yellow(`  The file contains: ${cursorUsage.usersInFile.join(', ')}`));
+            console.log(chalk.yellow('  Re-run with --cursor-usage-user <email> to pick one of those.'));
+          }
+          cursorUsage = undefined;
         }
       }
 
@@ -196,6 +225,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         generatedAt: new Date().toISOString(),
         ...(userEmail !== undefined && { userEmail }),
         ...(cursorTeamAnalytics !== undefined && { cursorTeamAnalytics }),
+        ...(cursorUsage !== undefined && { cursorUsage }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
