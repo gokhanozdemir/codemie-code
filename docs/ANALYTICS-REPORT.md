@@ -375,6 +375,42 @@ Things worth knowing about the export format:
   there is no key to join them on. The section sits beside the session table and contributes to no
   cost figure elsewhere in the report. Read them side by side, not summed.
 
+<a id="cursor-usage-fetch"></a>
+
+#### Downloading it automatically (optional, unsupported)
+
+If clicking Export each time is tedious, CodeMie can fetch the same CSV. This is **opt-in and
+unsupported**, and file import above remains the recommended path.
+
+```bash
+export CURSOR_USAGE_EXPORT_URL='<the export endpoint from your browser Network tab>'
+export CURSOR_SESSION_TOKEN='<userId>::<jwt>'      # the WorkosCursorSessionToken cookie
+codemie analytics --report --open --cursor-usage-fetch
+```
+
+**All three are required** — the flag, the URL, and the cookie. Any one missing means no request
+is made at all.
+
+Why it looks like this rather than "just work":
+
+- **CodeMie ships no endpoint URL.** Cursor's dashboard export is undocumented and can change or
+  disappear without notice. Baking in such a URL means quietly breaking later; supplying it
+  yourself means you know exactly what is being called. Read it off your browser's Network tab
+  when you click Export.
+- **You supply the cookie.** It is a browser cookie for cursor.com, so on a signed-in machine it
+  lives in Cursor's Chromium cookie jar encrypted against your OS keychain. CodeMie does not
+  decrypt that — prying a credential out of another application's protected store is not
+  something an analytics command should do. It makes a harmless read-only check of Cursor's own
+  plaintext state database first, and otherwise expects `CURSOR_SESSION_TOKEN`.
+- **Authentication is the session cookie, never an API key.** An admin `crsr_` Team API key is a
+  different credential for a different API and is rejected here.
+- **The token is never logged.** Failures name the status code and the endpoint host only. Run
+  with `CODEMIE_DEBUG=true` to see them.
+
+The response goes through the exact same parser as the file import, so a downloaded export and a
+hand-saved one can never be interpreted differently. Any failure — 401, 403, a changed endpoint, a
+sign-in redirect returning HTML — omits the section and leaves the rest of the report intact.
+
 > **What about the Cursor Team Analytics API?** CodeMie does not use it. Its documented endpoints
 > return no token or cost field at any tier, so it cannot answer "what did Cursor cost?", and it
 > requires an enterprise-admin key most users cannot obtain. An implementation exists on the
@@ -426,8 +462,13 @@ Source flags:
   --cursor-usage-csv <path> Import a Cursor usage-events CSV (Cursor dashboard
                             -> Usage -> Export) for REAL Cursor tokens and cost.
                             No network call. Anyone can use this.
-  --cursor-usage-user <mail> Which User column value to keep from the CSV
+  --cursor-usage-user <mail> Which User column value to keep from the export
                             (default: your configured CodeMie email)
+  --cursor-usage-fetch      Download the usage export instead of passing a file.
+                            OPT-IN and UNSUPPORTED: makes a NETWORK CALL to an
+                            undocumented endpoint. Requires CURSOR_USAGE_EXPORT_URL
+                            and CURSOR_SESSION_TOKEN. File import is the
+                            recommended path. (see "Downloading it automatically")
 
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
@@ -439,7 +480,9 @@ Other flags:
 
 | Variable | Effect |
 |---|---|
-| `CODEMIE_DEBUG=true` | Verbose per-source discovery and enrichment logging, including each Team Analytics endpoint's outcome. |
+| `CURSOR_USAGE_EXPORT_URL` | Cursor dashboard usage-export endpoint, for `--cursor-usage-fetch`. No default — CodeMie ships no undocumented URL. |
+| `CURSOR_SESSION_TOKEN` | Your `WorkosCursorSessionToken` cookie, `<userId>::<jwt>`, for `--cursor-usage-fetch`. Never logged. |
+| `CODEMIE_DEBUG=true` | Verbose per-source discovery and enrichment logging, including the usage-export fetch outcome. |
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external`, `--no-scan-native`, and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 

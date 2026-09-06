@@ -263,6 +263,12 @@ export interface AnalyticsOptions {
    * email, which is often a different address from the one on the Cursor account.
    */
   cursorUsageUser?: string;
+  /**
+   * When true (via --cursor-usage-fetch), download the usage export instead of reading a file.
+   * Requires CURSOR_USAGE_EXPORT_URL and a signed-in Cursor session; the flag alone makes no
+   * network call, and neither does a readable session cookie on its own.
+   */
+  cursorUsageFetch?: boolean;
 }
 
 /** Options for the `analytics otel` subcommand: the shared base plus OTEL-specific flags. */
