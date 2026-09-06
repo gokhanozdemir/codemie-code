@@ -4,7 +4,6 @@
  * `generatedAt` so this stays deterministic and unit-testable.
  */
 
-import type { CursorTeamAnalytics } from '@/agents/plugins/cursor/cursor.team-analytics.js';
 import type { CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 import type { RootAnalytics } from '../types.js';
 import type { SessionCostIndex, CostSummary, AgentCoverage } from '../cost/types.js';
@@ -19,8 +18,6 @@ export interface PayloadContext {
   userEmail?: string;   // caller stamps; absent when not authenticated
   periodStart?: string; // ISO — caller stamps from filter or session start
   periodEnd?: string;   // ISO — caller stamps from filter or session end
-  /** Opt-in Cursor Team Analytics for the report owner; absent unless the gate opened. */
-  cursorTeamAnalytics?: CursorTeamAnalytics;
   /** Opt-in Cursor usage-events CSV import; absent unless a path was given. */
   cursorUsage?: CursorUsageImport;
 }
@@ -176,7 +173,6 @@ export function buildPayload(
     unpricedModels: summary.unpricedModels,
     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
     ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
-    ...(ctx.cursorTeamAnalytics !== undefined && { cursorTeamAnalytics: ctx.cursorTeamAnalytics }),
     ...(ctx.cursorUsage !== undefined && { cursorUsage: ctx.cursorUsage }),
     ...(ctx.periodStart !== undefined
       ? { periodStart: ctx.periodStart }

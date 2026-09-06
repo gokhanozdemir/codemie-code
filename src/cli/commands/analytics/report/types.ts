@@ -3,7 +3,6 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { CursorTeamAnalytics } from '@/agents/plugins/cursor/cursor.team-analytics.js';
 import type { CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
@@ -83,13 +82,6 @@ export interface ReportMeta {
   unpricedModels: string[];
   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
   userEmail?: string;   // identity of the report owner; absent when not authenticated
-  /**
-   * Optional Cursor Team Analytics aggregates for the report owner alone. Kept in `meta` and
-   * rendered as its own section precisely because it CANNOT be joined to `sessions`: the API
-   * returns per-user/per-date aggregates with no composerId, and it carries no token or cost
-   * fields, so merging it into session rows would invent both a key and a figure.
-   */
-  cursorTeamAnalytics?: CursorTeamAnalytics;
   /**
    * Optional Cursor usage-events CSV import — the only source of real Cursor tokens and cost.
    * Kept beside the sessions rather than inside them: its rows are per-event with no composerId,

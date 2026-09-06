@@ -96,10 +96,10 @@ What this means when reading a report:
 - When tokens *are* recovered but the model is `Auto`/`default` (or otherwise absent from the price
   table), the session is estimated at a published Claude Sonnet API rate, keeps its own model label,
   and is badged as partial. Treat it as an understated floor.
-- The Enterprise Team Analytics API does **not** close this gap: none of its documented endpoints
-  returns token or cost fields at any tier, and it needs an **admin-scoped** key an ordinary team
-  member cannot obtain. See
-  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-opt-in).
+- The Enterprise Team Analytics API does **not** close this gap and is **not integrated**: none of
+  its documented endpoints returns token or cost fields at any tier, and it needs an admin-scoped
+  key an ordinary team member cannot obtain. See
+  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-not-integrated).
 
 Nothing here is inferred from `contextTokensUsed`, transcript text length, or tool-call counts.
 Those correlate with usage but are not billable token counts, and presenting them as such would
@@ -149,7 +149,6 @@ column that moved (see [Database schema drift](#database-schema-drift-after-a-cu
 |---|---|
 | `CURSOR_HOME` | Overrides `~/.cursor`. Also relocates `state.vscdb` to `$CURSOR_HOME/User/globalStorage/state.vscdb`, mirroring its real layout relative to Cursor's app-data root. Unset (the default) uses `~/.cursor` plus the per-OS app-data path above. |
 | `CODEMIE_DEBUG=true` | Enables the `[cursor]` debug logging described under [Logging and debugging](#logging-and-debugging). |
-| `CURSOR_TEAM_ANALYTICS_API_KEY` | **Admin-scoped** Cursor Enterprise API key, for enterprise team admins only. Required *together with* `--cursor-team-analytics` before any network call is made; neither alone is enough. It returns edit/activity aggregates, **never tokens or cost** — for those use `--cursor-usage-csv`, which needs no credential. Unset (the default) means analytics stays entirely local. |
 
 `CURSOR_HOME` mirrors `COPILOT_HOME` in the Copilot CLI plugin and is what lets the whole
 ingestion path be driven against a fixture tree in tests.

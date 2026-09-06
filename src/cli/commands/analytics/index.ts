@@ -23,7 +23,6 @@ export function createAnalyticsCommand(): Command {
   applyCommonOptions(command)
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
     .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
-    .option('--cursor-team-analytics', 'ENTERPRISE TEAM ADMINS ONLY: fetch Cursor Team Analytics edit/activity aggregates (requires an admin-scoped CURSOR_TEAM_ANALYTICS_API_KEY; makes a network call). Returns no tokens or cost — for those, use --cursor-usage-csv')
     .option('--cursor-usage-csv <path>', 'Import a Cursor usage-events CSV (Cursor dashboard → Usage → Export) for real Cursor tokens and cost. No network call')
     .option('--cursor-usage-user <email>', 'Which User column value to keep from --cursor-usage-csv (default: your configured CodeMie email)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
@@ -174,29 +173,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         }
       }
 
-      // The one network call in the analytics path, and it happens only when the user asked for
-      // it AND a credential exists. Fail-soft: a null result simply omits the report section.
-      let cursorTeamAnalytics;
-      if (options.cursorTeamAnalytics) {
-        const { fetchCursorTeamAnalytics } = await import('@/agents/plugins/cursor/cursor.team-analytics.js');
-        cursorTeamAnalytics = (await fetchCursorTeamAnalytics({
-          enabled: true,
-          apiKey: process.env.CURSOR_TEAM_ANALYTICS_API_KEY,
-          userEmail,
-          ...(filter.fromDate !== undefined && { startDate: filter.fromDate.toISOString().slice(0, 10) }),
-          ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
-        })) ?? undefined;
-        if (!cursorTeamAnalytics) {
-          // Do NOT tell an ordinary team member to go set an admin API key — they cannot get
-          // one, and it would not carry tokens or cost even if they could. Point at the CSV.
-          const { TEAM_ANALYTICS_AUDIENCE, TEAM_ANALYTICS_MEMBER_HINT } = await import('@/agents/plugins/cursor/cursor.team-analytics.js');
-          console.log(chalk.yellow(`\n  Cursor Team Analytics returned nothing. ${TEAM_ANALYTICS_AUDIENCE}`));
-          console.log(chalk.yellow('  It also never returns tokens or cost, so it cannot answer "what did Cursor cost?".'));
-          console.log(chalk.yellow(`  ${TEAM_ANALYTICS_MEMBER_HINT}`));
-          console.log(chalk.dim('  Report continues without the Team Analytics section.'));
-        }
-      }
-
       // #21: the member path to real Cursor tokens/cost. Pure file read — no network call.
       let cursorUsage;
       if (options.cursorUsageCsv) {
@@ -225,7 +201,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         projectFilter: options.project ?? 'all',
         generatedAt: new Date().toISOString(),
         ...(userEmail !== undefined && { userEmail }),
-        ...(cursorTeamAnalytics !== undefined && { cursorTeamAnalytics }),
         ...(cursorUsage !== undefined && { cursorUsage }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),

@@ -41,7 +41,7 @@ codemie analytics --report --open --cursor-usage-csv ~/Downloads/team-usage-even
 
 ## What the Report Covers
 
-The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex, Gemini, OpenCode, Pi, GitHub Copilot CLI, and the built-in agent — plus native agent logs it discovers automatically on disk. It builds a single portable HTML file with **nine interactive views**, grouped in the sidebar as *Insights*, *Spend*, and *Raw*, plus two optional views ([Cursor Usage CSV](#cursor-usage-csv) and [Cursor Team API](#cursor-team-analytics)) that appear only when you opt into those sources.
+The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex, Gemini, OpenCode, Pi, GitHub Copilot CLI, and the built-in agent — plus native agent logs it discovers automatically on disk. It builds a single portable HTML file with **nine interactive views**, grouped in the sidebar as *Insights*, *Spend*, and *Raw*, plus an optional tenth ([Cursor Usage CSV](#cursor-usage-csv)) that appears only when you import a Cursor usage export.
 
 Discovered sessions that CodeMie did not launch are **excluded by default**; see [Session provenance](#session-provenance).
 
@@ -300,7 +300,7 @@ billable tokens and presenting them as such would trade an honest blank for a co
 number.
 
 **You can still get the real numbers** — they live in Cursor's dashboard usage export rather than
-on disk. See [Usage CSV import](#cursor-usage-csv), which turns those dashes into Cursor's own
+on disk. See [Cursor tokens and cost](#cursor-usage-csv), which turns those dashes into Cursor's own
 token and cost figures.
 
 <a id="session-provenance"></a>
@@ -332,29 +332,16 @@ Two things to know before you rely on the wider number:
 
 `--include-external` applies to the default local-session source only. The `analytics otel` subcommand does not accept it — an OTEL events file has no notion of CodeMie ownership.
 
-<a id="cursor-remote"></a>
-
-### Cursor tokens and cost — two paths, by audience
-
-Everything else in this document reads local files. Cursor is the exception worth understanding,
-because **Cursor's local stores no longer record billable token counts** (see
-[Analytics-only agents](#analytics-only-agents)), so Cursor sessions show `—` in the session table.
-There are two ways to fill that in, and they are not interchangeable:
-
-| You are | Use | Gives you | Network? |
-|---|---|---|---|
-| **Anyone** (member or admin) | [Usage CSV import](#cursor-usage-csv) — `--cursor-usage-csv` | **Real tokens and cost** | No |
-| **Enterprise team admin** | [Team Analytics](#cursor-team-analytics) — `--cursor-team-analytics` | Edit/activity aggregates. **No tokens, no cost** | Yes |
-
-If your question is *"what did Cursor cost?"*, you want the CSV. The Team Analytics API cannot
-answer it at any tier, for anyone, including admins.
-
 <a id="cursor-usage-csv"></a>
 
-#### Usage CSV import (everyone)
+### Cursor tokens and cost — the usage CSV
 
-Cursor's dashboard exports the usage ledger CodeMie cannot read locally. This is a plain file
-read — no credential, no network call.
+Everything else in this document reads local files. Cursor needs one extra step, because
+**Cursor's local stores no longer record billable token counts** (see
+[Analytics-only agents](#analytics-only-agents)) — so Cursor sessions show `—` in the session
+table. The numbers do still exist, in Cursor's dashboard export.
+
+This is a plain file read: no credential, no network call.
 
 1. In Cursor, open **Usage** and click **Export** for the period you want.
 2. Pass the downloaded file:
@@ -378,50 +365,21 @@ Things worth knowing about the export format:
   shows `—` for money and says why — the token counts are unaffected.
 - **`Cost` is not always a number.** Some rows read `Free`. Those contribute zero rather than
   corrupting the total.
-- **Rows are filtered to you.** The `User` column is matched against your configured CodeMie
-  email, which is frequently *not* the address on your Cursor account. Override with
-  `--cursor-usage-user <email>`. If the filter matches nothing, CodeMie warns and lists the
-  addresses actually present in the file rather than showing an empty section.
+- **Rows are filtered to you** *when the export names users at all*. The `User` column is matched
+  against your configured CodeMie email, which is frequently *not* the address on your Cursor
+  account — override with `--cursor-usage-user <email>`. An export with no `User` column is
+  imported whole, since there is no one else's data in it to exclude. If the filter matches
+  nothing, CodeMie warns and lists the addresses actually present rather than showing an empty
+  section.
 - **It is never merged into your sessions.** Export rows are per-event with no session id, so
   there is no key to join them on. The section sits beside the session table and contributes to no
   cost figure elsewhere in the report. Read them side by side, not summed.
 
-<a id="cursor-team-analytics"></a>
-
-#### Team Analytics API (enterprise team admins only)
-
-> **This is not the way to get Cursor tokens or cost.** None of Cursor's documented Team Analytics
-> endpoints returns a token or cost field at any tier. It also requires an **admin-scoped** key
-> that an ordinary team member cannot obtain. If you are not a team admin, use the
-> [usage CSV](#cursor-usage-csv) above.
-
-For admins who want Cursor's own edit and activity aggregates alongside their local data:
-
-```bash
-export CURSOR_TEAM_ANALYTICS_API_KEY='<admin-scoped Cursor Team API key>'
-codemie analytics --report --open --cursor-team-analytics
-```
-
-**Both the flag and the key are required.** A key sitting in your environment never triggers a call
-on its own, and neither does the flag without a key. Reading the machine you are on is a promise
-CodeMie already makes; calling a remote service is not, so it stays a deliberate act each time.
-
-**What you get.** Four `by-user` endpoints — agent edits, tab completions, models, and commands —
-filtered to your own email address, in their own **Cursor Team API** view. The view is hidden
-unless a pull succeeded.
-
-**Scope and privacy.** Only `by-user` endpoints are queried, always filtered to the requesting
-user's own email. No team-wide endpoint and no leaderboard, so a colleague's activity can never
-appear in your personal report.
-
-**Shown separately on purpose.** The API returns per-user/per-date aggregates with no session
-identifier and no token or cost field, so there is nothing to join on and nothing to join with.
-Merging them into the session table would mean inventing both.
-
-**Failure modes.** A missing key, a rejected key, an HTTP error, a DNS failure, or a schema change
-on Cursor's side all degrade to an omitted or explicitly-partial section plus a one-line notice
-pointing at the CSV path. The local report is never taken down by a remote outage. Run with
-`CODEMIE_DEBUG=true` to see each endpoint's outcome.
+> **What about the Cursor Team Analytics API?** CodeMie does not use it. Its documented endpoints
+> return no token or cost field at any tier, so it cannot answer "what did Cursor cost?", and it
+> requires an enterprise-admin key most users cannot obtain. An implementation exists on the
+> `feature/cursor-team-analytics-untested` branch but is **not shipped**, because we have no admin
+> account to verify it against.
 
 ---
 
@@ -470,11 +428,6 @@ Source flags:
                             No network call. Anyone can use this.
   --cursor-usage-user <mail> Which User column value to keep from the CSV
                             (default: your configured CodeMie email)
-  --cursor-team-analytics   ENTERPRISE TEAM ADMINS ONLY. Fetches edit/activity
-                            aggregates -- NOT tokens or cost. Makes a NETWORK
-                            CALL; also requires CURSOR_TEAM_ANALYTICS_API_KEY.
-                            Neither the flag nor the key works on its own.
-                            (see "Cursor tokens and cost")
 
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
@@ -486,7 +439,6 @@ Other flags:
 
 | Variable | Effect |
 |---|---|
-| `CURSOR_TEAM_ANALYTICS_API_KEY` | **Admin-scoped** Cursor Team API key. Required *together with* `--cursor-team-analytics`. Not needed — and not obtainable — for the [usage CSV path](#cursor-usage-csv). |
 | `CODEMIE_DEBUG=true` | Verbose per-source discovery and enrichment logging, including each Team Analytics endpoint's outcome. |
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external`, `--no-scan-native`, and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
