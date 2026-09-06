@@ -310,7 +310,12 @@ all read-only and all fail-soft. `CURSOR_HOME` relocates every one of them. Curs
 tagged `native-external` and appear only with `--include-external`.
 
 **Recent Cursor builds write zero `tokenCount` on bubbles, or omit it, while `toolFormerData` still
-works** — so tool-call enrichment is reliable and token/cost enrichment is usually empty. Such
+works** — so tool-call enrichment is reliable and token/cost enrichment is usually empty. The
+supported way to recover real Cursor tokens and cost is the **dashboard usage export**
+(`--cursor-usage-csv <path>`, `src/agents/plugins/cursor/cursor.usage-csv.ts`) — a local file read
+with no credential. `Kind=Included` in that CSV is a billing category, not zero usage: verified
+export rows marked `Included` carried 39,952,466 tokens and $25.25. Team Analytics is **not** the
+answer here and never was. Such
 sessions carry `usageUnavailableReason` and render as an em dash, never as `$0`, `Included`, or
 "covered by subscription". Do not widen the default discovery max-age to harvest year-old bubbles
 that still have tokens, and do not infer tokens from `contextTokensUsed`, transcript length, or
@@ -321,14 +326,19 @@ the session `usagePartial`.
 Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
 undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
 
-### Cursor Enterprise Team Analytics API (opt-in)
+### Cursor Enterprise Team Analytics API (opt-in, admin-only)
 
 Cursor publishes an official Team Analytics API
 (<https://cursor.com/docs/account/teams/analytics-api>). CodeMie integrates it as a strictly
-opt-in, user-scoped extra: `src/agents/plugins/cursor/cursor.team-analytics.ts`, surfaced by
-`codemie analytics --report --cursor-team-analytics` with `CURSOR_TEAM_ANALYTICS_API_KEY` set.
-**Both** are required — a configured credential alone never triggers a call — and this is the only
-network call anywhere in the analytics path. It still **cannot** supply tokens or cost.
+opt-in, user-scoped extra for **enterprise team admins**: `src/agents/plugins/cursor/cursor.team-analytics.ts`,
+surfaced by `codemie analytics --report --cursor-team-analytics` with an admin-scoped
+`CURSOR_TEAM_ANALYTICS_API_KEY` set. **Both** are required — a configured credential alone never
+triggers a call — and this is the only network call anywhere in the analytics path.
+
+It still **cannot** supply tokens or cost, and the key is not obtainable by an ordinary team
+member. No CLI, doc, or UI surface may present it as the member route to billable usage; every
+such surface must point at `--cursor-usage-csv` instead. The audience wording is centralized in
+`TEAM_ANALYTICS_AUDIENCE` / `TEAM_ANALYTICS_MEMBER_HINT` so the CLI and report cannot drift.
 
 What the API is:
 
