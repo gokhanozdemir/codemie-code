@@ -128,7 +128,7 @@ Ask the user when:
 | Keywords | P0 Guide | P1 Guide |
 |---|---|---|
 | `plugin`, `registry`, `agent`, `adapter` | architecture | external-integrations |
-| `claude`, `codex`, `gemini`, `opencode`, `pi`, `kimi`, `copilot`, `acp` | architecture | external-integrations |
+| `claude`, `codex`, `gemini`, `opencode`, `pi`, `kimi`, `copilot`, `cursor`, `acp` | architecture | external-integrations |
 | `session`, `metrics`, `analytics`, `transcript`, `sync` | architecture | external-integrations |
 | `architecture`, `layer`, `structure`, `pattern` | architecture | development-practices |
 | `test`, `vitest`, `mock`, `coverage` | testing-patterns | development-practices |
@@ -222,7 +222,8 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger |
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
 | `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |
-| `copilot-cli` | `copilot-cli/` | none | Analytics ingestion only — never installed or launched by CodeMie |
+| `copilot-cli` | `copilot-cli/` | `@github/copilot` | Managed agent (installed, configured, and launched by CodeMie); session metrics + backend conversation sync via its own processors |
+| `cursor` | `cursor/` | none | Analytics-only agent (`analyticsOnly: true`) — never installed or launched by CodeMie; reads Cursor's locally persisted agent transcripts, enriched read-only from Cursor's AI-tracking database, and surfaces them as unmanaged sessions (visible by default, no `--include-external`) |
 
 Not agent adapters, but injected runtime plugins under the same tree: `codemie-code-hooks/` (injected into `codemie-code` and `opencode`) and `reasoning-sanitizer/` (injected into `codemie-code`).
 
