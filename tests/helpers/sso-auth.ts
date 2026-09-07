@@ -40,9 +40,18 @@ export function writeSsoProfile(codemieHome: string): void {
 }
 
 /**
- * Strip CODEMIE_* vars from the process environment for SSO subprocess spawns.
- * Uses a denylist (vs jwtCleanEnv's allowlist) to preserve HOME, proxy settings,
- * and other vars that the OS keychain and network calls depend on.
+ * Strip CODEMIE_* and CLAUDE_CODE_* vars from the process environment for SSO
+ * subprocess spawns. Uses a denylist (vs jwtCleanEnv's allowlist) to preserve
+ * HOME, proxy settings, and other vars that the OS keychain and network calls
+ * depend on.
+ *
+ * CLAUDE_CODE_* is stripped because when the test suite itself runs inside a
+ * Claude Code session (e.g. a developer or CI agent driving `npm test` via
+ * Claude Code's own Bash tool), the outer session's CLAUDE_CODE_CHILD_SESSION
+ * marker leaks into the spawned test's env. The nested `claude` process under
+ * test then sees itself as a child session and disables transcript
+ * persistence, so no metrics are recorded — a false failure in tests like
+ * TC-024 that assert on session metrics, unrelated to the code under test.
  *
  * Also strips node_modules/.bin entries from PATH so locally-installed package
  * shims (e.g. @codemieai/codemie-opencode's `codemie` bin) don't shadow the
@@ -50,7 +59,9 @@ export function writeSsoProfile(codemieHome: string): void {
  */
 export function ssoCleanEnv(): NodeJS.ProcessEnv {
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('CODEMIE_') && !key.startsWith('CI_CODEMIE_')),
+    Object.entries(process.env).filter(
+      ([key]) => !key.startsWith('CODEMIE_') && !key.startsWith('CI_CODEMIE_') && !key.startsWith('CLAUDE_CODE_'),
+    ),
   ) as NodeJS.ProcessEnv;
   if (env.PATH) env.PATH = stripNodeModulesBin(env.PATH);
   return env;

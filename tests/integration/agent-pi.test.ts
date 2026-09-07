@@ -10,7 +10,9 @@
  * HOME is isolated: Pi redirects its agent dir into <cwd>/.pi/codemie, so a
  * temp HOME keeps the run self-contained. Pi accepts a claude model.
  *
- * Gated on SSO_AVAILABLE. Cleanup: profile restored + temp home removed.
+ * Gated on SSO_AVAILABLE and the `pi` CLI being on PATH (skips gracefully on
+ * machines that haven't run `codemie install pi`). Cleanup: profile restored
+ * + temp home removed.
  *
  * Run: npx vitest run --project agent -- agent-pi
  */
@@ -22,10 +24,11 @@ import {
   runAgentTaskSmoke,
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
+  isCliInstalled,
   type AgentSmokeRun,
 } from '../helpers/index.js';
 
-describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Pi agent smoke (real)', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false' && isCliInstalled(process.env.CODEMIE_PI_BIN || 'pi'))('Pi agent smoke (real)', () => {
   let originalActiveProfile: string | undefined;
   let run: AgentSmokeRun;
 
