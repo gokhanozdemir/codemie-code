@@ -106,6 +106,28 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   return { sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
 }
 
+/**
+ * Turn an adapter-supplied `usageMeta.tokensByModel` into the same {@link TokenUsage} map shape
+ * every per-message reader in `usage-readers.ts` produces, so {@link priceUsage} needs no
+ * separate code path for it. No cache-read/cache-creation split exists in this shape (the
+ * source, e.g. Cursor's sparse per-turn token counts, carries only input/output) — those fields
+ * are zeroed rather than guessed.
+ */
+function tokensByModelUsage(tokensByModel: Record<string, { inputTokens: number; outputTokens: number }>): Map<string, TokenUsage> {
+  const out = new Map<string, TokenUsage>();
+  for (const [model, t] of Object.entries(tokensByModel)) {
+    out.set(model, {
+      input: t.inputTokens,
+      output: t.outputTokens,
+      cacheRead: 0,
+      cacheCreation: 0,
+      cacheCreation1h: 0,
+      total: t.inputTokens + t.outputTokens,
+    });
+  }
+  return out;
+}
+
 /** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
 function priceUsage(
   sessionId: string,
@@ -358,6 +380,14 @@ export async function enrichCosts(
       usageByModel = new Map<string, TokenUsage>();
       series = [];
       records = [];
+    }
+    // An adapter with no per-message usage reader (see usage-readers.ts) can still know a
+    // session-level total some other way — Cursor's real per-turn token counts live in a
+    // separate store with no alignment to transcript messages, so there is nothing for a
+    // per-message reader to walk. `usageMeta.tokensByModel` is that adapter-supplied total;
+    // only used as a fallback so an agent WITH a working per-message reader is never overridden.
+    if (usageByModel.size === 0 && entry.parsed?.usageMeta?.tokensByModel) {
+      usageByModel = tokensByModelUsage(entry.parsed.usageMeta.tokensByModel);
     }
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
     if (entry.filePath) {

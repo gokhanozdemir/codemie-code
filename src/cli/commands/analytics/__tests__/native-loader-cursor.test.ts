@@ -171,6 +171,49 @@ async function writeComposerHeaders(rows: ComposerHeaderRow[]): Promise<void> {
   db.close();
 }
 
+interface BubbleFixture {
+  /** Defaults to an incrementing counter when omitted — only the composerId prefix matters to the reader. */
+  bubbleId?: string;
+  toolName?: string;
+  toolStatus?: 'completed' | 'error' | 'cancelled' | 'loading';
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+let bubbleIdCounter = 0;
+
+/**
+ * A fixture `cursorDiskKV` table in the SAME `state.vscdb` file `writeComposerHeaders` writes
+ * to — real bubble rows are keyed `bubbleId:<composerId>:<bubbleId>` (see `cursor.bubbles.ts`).
+ * Uses `CREATE TABLE IF NOT EXISTS` since a test may call this before or after
+ * `writeComposerHeaders` touches the same file; the two tables never collide.
+ *
+ * A fixture row that specifies neither tool data nor token data omits `toolFormerData`/
+ * `tokenCount` entirely from the JSON value, exactly mirroring a real bubble that carries
+ * neither — this lets a test build bubbles with only tool data, only token data, or both.
+ */
+async function writeCursorBubbles(composerId: string, bubbles: BubbleFixture[]): Promise<void> {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = join(cursorHome, 'User', 'globalStorage');
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, 'state.vscdb'));
+  db.exec('CREATE TABLE IF NOT EXISTS cursorDiskKV (key TEXT, value TEXT)');
+  const insert = db.prepare('INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)');
+  for (const bubble of bubbles) {
+    const bubbleId = bubble.bubbleId ?? `bubble-${(bubbleIdCounter += 1)}`;
+    const hasToolData = bubble.toolName !== undefined || bubble.toolStatus !== undefined;
+    const hasTokenData = bubble.inputTokens !== undefined || bubble.outputTokens !== undefined;
+    const value = JSON.stringify({
+      ...(hasToolData && { toolFormerData: { name: bubble.toolName, status: bubble.toolStatus } }),
+      ...(hasTokenData && {
+        tokenCount: { inputTokens: bubble.inputTokens, outputTokens: bubble.outputTokens },
+      }),
+    });
+    insert.run(`bubbleId:${composerId}:${bubbleId}`, value);
+  }
+  db.close();
+}
+
 /** A managed agent's native session, for contrast with the unmanaged Cursor rows. */
 const claudeDiscovery: DiscoveredNative = {
   agentName: 'claude',
@@ -582,7 +625,13 @@ describe('loadNativeSessions — Cursor absent', () => {
   });
 });
 
-describe('loadNativeSessions — Cursor never reports tokens, cost or line counts', () => {
+// This block's own tests write no bubbles at all, so `readCursorBubbles` returns a zeroed
+// summary and the `usageUnavailableReason` path below still applies to them unchanged. With a
+// real bubble token signal (see the "Cursor bubble enrichment" describe block further down),
+// Cursor CAN report a partial `usagePartial`/`tokensByModel` usage instead — that path is
+// conditional on `hasTokenSignal`, not universally absent, which is what makes this describe's
+// old name ("never reports tokens") no longer an accurate universal claim.
+describe('loadNativeSessions — Cursor reports no usage or line counts without a bubble signal', () => {
   it('states why usage is unavailable instead of reporting zero', async () => {
     writeTranscript('conv-a', conversation('add cursor analytics'));
 
@@ -613,6 +662,92 @@ describe('loadNativeSessions — Cursor never reports tokens, cost or line count
     expect(operation.linesAdded).toBeUndefined();
     expect(operation.linesRemoved).toBeUndefined();
     expect(operation.linesModified).toBeUndefined();
+  });
+});
+
+/**
+ * `cursorDiskKV` bubble rows in the SAME `state.vscdb` file `composerHeaders` lives in (see
+ * `cursor.bubbles.ts` and `docs/adr/`) are the source for real per-tool success/failure counts
+ * and, on the sparse fraction of bubbles that carry a nonzero `tokenCount`, partial token
+ * pricing. Bubbles are keyed by composerId directly, so enrichment applies identically whether
+ * or not a transcript exists on disk for the conversation.
+ */
+describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor bubble enrichment from cursorDiskKV', () => {
+  it('reports real per-tool success/failure counts from resolved bubble statuses', async () => {
+    writeTranscript('conv-a', conversation('add cursor analytics'));
+    await writeCursorBubbles('conv-a', [
+      { toolName: 'edit_file', toolStatus: 'completed' },
+      { toolName: 'edit_file', toolStatus: 'error' },
+    ]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].deltas[0].toolStatus).toEqual({ edit_file: { success: 1, failure: 1 } });
+  });
+
+  it('does not let a still-loading bubble skew or fabricate a tool outcome', async () => {
+    writeTranscript('conv-a', conversation('add cursor analytics'));
+    await writeCursorBubbles('conv-a', [
+      { toolName: 'read_file', toolStatus: 'completed' },
+      { toolName: 'run_terminal', toolStatus: 'loading' },
+    ]);
+
+    const { rows } = await runLoader();
+    const toolStatus = cursorRows(rows)[0].deltas[0].toolStatus;
+
+    expect(toolStatus).toEqual({ read_file: { success: 1, failure: 0 } });
+    expect(toolStatus).not.toHaveProperty('run_terminal');
+  });
+
+  it('reports usagePartial with the summed tokens when a bubble carries a real token signal', async () => {
+    writeTranscript('conv-a', conversation('add cursor analytics'));
+    await writeTrackingDb([
+      {
+        conversationId: 'conv-a',
+        fileName: join(projectDir, 'src', 'app.ts'),
+        model: 'claude-4.5-sonnet',
+        timestamp: FIRST_EDIT_MS,
+      },
+    ]);
+    await writeCursorBubbles('conv-a', [
+      { inputTokens: 120, outputTokens: 40 },
+      { inputTokens: 0, outputTokens: 0 }, // present but zero: must not itself trip the signal
+    ]);
+
+    const { parsed } = await runLoader();
+
+    expect(parsed[0].usageMeta).toEqual({
+      usagePartial: true,
+      tokensByModel: { 'claude-4.5-sonnet': { inputTokens: 120, outputTokens: 40 } },
+    });
+  });
+
+  it('keeps the usageUnavailableReason path when bubbles are present but carry no nonzero token count', async () => {
+    writeTranscript('conv-a', conversation('add cursor analytics'));
+    await writeCursorBubbles('conv-a', [
+      { toolName: 'edit_file', toolStatus: 'completed' },
+      { inputTokens: 0, outputTokens: 0 },
+    ]);
+
+    const { parsed } = await runLoader();
+
+    expect(parsed[0].usageMeta).toEqual({
+      usageUnavailableReason: expect.stringContaining('Cursor'),
+    });
+    expect(parsed[0].usageMeta).not.toHaveProperty('usagePartial');
+  });
+
+  it('enriches a header-only session (no transcript) with real toolStatus from its bubbles', async () => {
+    await writeComposerHeaders([
+      { composerId: 'header-only', projectPath: projectDir, createdAt: FIRST_EDIT_MS, updatedAt: LAST_EDIT_MS },
+    ]);
+    await writeCursorBubbles('header-only', [{ toolName: 'edit_file', toolStatus: 'completed' }]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows).find((s) => s.sessionId === 'header-only');
+
+    expect(row).toBeDefined();
+    expect(row!.deltas[0].toolStatus).toEqual({ edit_file: { success: 1, failure: 0 } });
   });
 });
 

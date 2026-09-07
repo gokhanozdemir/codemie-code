@@ -29,13 +29,18 @@
  *   otherwise report a span of days rather than of minutes;
  * - messages are emitted deliberately WITHOUT per-message timestamps, so the native loader
  *   falls back to the descriptor's window instead of a fabricated per-message clock;
- * - `usageMeta.usageUnavailableReason` is always set, which is what makes the report render
- *   tokens and cost as unmeasurable rather than as a confident zero.
+ * - `usageMeta.usageUnavailableReason` is set only when `cursorDiskKV`'s bubbles carried no
+ *   token signal at all for the session — see {@link resolveUsageMeta} — which is what makes
+ *   the report render tokens and cost as unmeasurable rather than as a confident zero for the
+ *   (large) majority of sessions the sparse per-turn token data never touches.
  *
  * Model and edited-file lists still come from the AI-tracking database, joined by the same
- * `composerId`/`conversationId` — see {@link CursorSessionAdapter.setTrackingIndex}. When
- * either store is missing, locked, on a runtime without `node:sqlite`, or schema-drifted, the
- * join simply finds nothing and the session degrades to whatever the remaining sources supply.
+ * `composerId`/`conversationId` — see {@link CursorSessionAdapter.setTrackingIndex}. Per-tool
+ * call outcomes (success/failure) and partial token pricing come from `state.vscdb`'s
+ * `cursorDiskKV` table (`bubbleId:<composerId>:<bubbleId>` rows), joined the same way — see
+ * `cursor.bubbles.ts`. When any of these stores is missing, locked, on a runtime without
+ * `node:sqlite`, or schema-drifted, the join simply finds nothing and the session degrades to
+ * whatever the remaining sources supply.
  *
  * Messages are emitted in the Claude-shaped `{type, message: {role, content}}` form (with
  * `gitBranch` stamped alongside `message` — see {@link applyBranch}) on purpose:
@@ -67,6 +72,8 @@ import type { CursorConversationActivity, CursorTrackingIndex } from './cursor.t
 import { readCursorTrackingIndex } from './cursor.tracking-db.js';
 import type { CursorComposerHeader, CursorComposerIndex } from './cursor.state-db.js';
 import { readCursorComposerIndex } from './cursor.state-db.js';
+import type { CursorBubbleSummary } from './cursor.bubbles.js';
+import { readCursorBubbles } from './cursor.bubbles.js';
 import type { CursorMessageLine, CursorTranscriptLine } from './cursor.transcript.js';
 import {
   contentBlocks,
@@ -84,14 +91,14 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const TRANSCRIPTS_DIR = 'agent-transcripts';
 
 /**
- * Why a Cursor session is never priced.
- *
- * Cursor stores no token counts anywhere on disk — not in the transcript, not in the
- * AI-tracking database. Reporting zero cost would read as "this session was free"; the
- * reason string makes the report say "unmeasurable" instead.
+ * Why a Cursor session has no priced usage — used only when `cursorDiskKV` carried no token
+ * signal for it at all (see {@link resolveUsageMeta}; most sessions, since the per-turn
+ * `tokenCount` field is present on roughly 1% of bubbles per ADR 0001). Reporting zero cost
+ * would read as "this session was free"; the reason string makes the report say "unmeasurable"
+ * instead.
  */
 const NO_USAGE_REASON =
-  'Cursor records no token usage locally — its transcripts carry no token counts, so cost cannot be derived';
+  "Cursor records token usage on only a sparse fraction of turns — this session's bubbles carried none, so cost cannot be derived";
 
 /** Trailing-separator-insensitive directory comparison. */
 function sameDir(a: string | undefined, b: string): boolean {
@@ -411,6 +418,36 @@ function aggregateLinesFileOp(
       linesRemoved: header.linesRemoved ?? 0,
     },
   ];
+}
+
+/**
+ * Usage provenance for a session, from its `cursorDiskKV` bubbles.
+ *
+ * Cursor's per-turn token counts are sparse (~1% of bubbles, per ADR 0001) and have no
+ * alignment to transcript messages, so there is nothing for a per-message reader to walk —
+ * unlike a fabricated confident zero, `usagePartial: true` tells the report this total
+ * understates the session's real usage. A session with no token signal anywhere keeps the
+ * existing "unmeasurable" reason instead of a $0.00 that would read as "this was free".
+ *
+ * The summed tokens are attributed to the conversation's own recorded model (from the
+ * AI-tracking database — the same single-value case {@link applyModels} already prefers) when
+ * unambiguous, or `'unknown'` when no single model is recorded; an unrecognized model name
+ * simply prices as unpriced rather than misattributing spend to the wrong model.
+ */
+function resolveUsageMeta(
+  bubbles: CursorBubbleSummary,
+  activity: CursorConversationActivity | undefined
+): NonNullable<ParsedSession['usageMeta']> {
+  if (!bubbles.hasTokenSignal) {
+    return { usageUnavailableReason: NO_USAGE_REASON };
+  }
+  const model = activity?.models[0] ?? 'unknown';
+  return {
+    usagePartial: true,
+    tokensByModel: {
+      [model]: { inputTokens: bubbles.totalInputTokens, outputTokens: bubbles.totalOutputTokens },
+    },
+  };
 }
 
 /** What one transcript's lines amount to, once the shape Cursor writes is set aside. */
@@ -735,9 +772,10 @@ export class CursorSessionAdapter implements SessionAdapter {
     const conversationId = basename(filePath, '.jsonl');
     const hasTranscript = existsSync(filePath);
     const lines = hasTranscript ? readCursorTranscript(filePath) : [];
-    const [activity, composerIndex] = await Promise.all([
+    const [activity, composerIndex, bubbles] = await Promise.all([
       this.trackingIndex().then((index) => index.get(conversationId)),
       this.composerIndex(),
+      readCursorBubbles(conversationId),
     ]);
     const header = composerIndex.get(conversationId);
 
@@ -767,11 +805,15 @@ export class CursorSessionAdapter implements SessionAdapter {
       // duration Cursor never recorded. Leaving them out makes the loader fall back to the
       // descriptor's file-derived window, which is the only real signal available.
       messages,
-      usageMeta: {
-        usageUnavailableReason: NO_USAGE_REASON,
-      },
+      usageMeta: resolveUsageMeta(bubbles, activity),
       metrics: {
         tools,
+        // Real per-tool success/failure, from cursorDiskKV's toolFormerData.status — replaces
+        // the old assumed-success behavior (a tool named in `tools` but absent here just means
+        // no bubble resolved an outcome for it, e.g. a call still 'loading' when scanned).
+        // Populated independent of `hasTranscript`: bubbles are keyed by composerId directly,
+        // so a header-only session (most of them) gets real tool outcomes too.
+        ...(Object.keys(bubbles.toolStatus).length > 0 && { toolStatus: bubbles.toolStatus }),
         userPrompts,
         fileOperations: [
           ...(fileOperationsFrom(activity) ?? []),

@@ -80,6 +80,31 @@ describe('enrichCosts', () => {
     expect(index.get('s1')!.agentSessionFile).toBeUndefined();
   });
 
+  it('prices from usageMeta.tokensByModel when no per-message reader produced usage (e.g. Cursor)', async () => {
+    // No messages at all — there is nothing for a per-message reader to walk — but the adapter
+    // supplied a session-level total via usageMeta, which is the fallback under test.
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () =>
+        ({
+          sessionId: 's1',
+          agentName: 'cursor',
+          metadata: {},
+          messages: [],
+          usageMeta: {
+            usagePartial: true,
+            tokensByModel: { 'claude-sonnet-4-5': { inputTokens: 500_000, outputTokens: 0 } },
+          },
+        }) as never,
+    };
+    const { index } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    expect(c.priced).toBe(true);
+    expect(c.costUSD).toBeCloseTo(1.5, 6); // 500k input @ $3/1M sonnet-4-5
+    expect(c.tokens.input).toBe(500_000);
+    expect(c.usagePartial).toBe(true);
+  });
+
   it('prices a codex session from token_count events', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
