@@ -128,27 +128,44 @@ function tokensByModelUsage(tokensByModel: Record<string, { inputTokens: number;
   return out;
 }
 
+/**
+ * Rate stand-in for a model that recovered real tokens but matches no pricing entry — Cursor
+ * delegates model choice and records `default` (displayed as Auto per ADR 0001), and other
+ * agents occasionally report ids the table has not caught up with. Claude Sonnet is the
+ * published mid-tier API rate, so it is the defensible order-of-magnitude estimate; a blank
+ * cell would be less honest than a labelled floor when the token counts themselves are real.
+ * Callers must keep the session's own model label and mark the usage partial.
+ */
+const UNPRICED_ESTIMATE_MODEL = 'claude-sonnet-4';
+
 /** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
 function priceUsage(
   sessionId: string,
   hadLog: boolean,
   usageByModel: Map<string, TokenUsage>
-): { cost: SessionCost; unpriced: string[] } {
+): { cost: SessionCost; unpriced: string[]; estimated: boolean } {
   const perModel: ModelCost[] = [];
   const unpriced: string[] = [];
   let sessionTokens = emptyUsage();
   let sessionCost = 0;
   let cacheReadCostUSD = 0;
+  let estimated = false;
 
   for (const [rawModel, usage] of usageByModel) {
     const model = normalizeModelName(rawModel);
-    const price = lookupPrice(model);
+    // Real attribution always wins; the stand-in only steps in when there are genuine tokens
+    // to price. Zero tokens stay at $0 rather than becoming an invented estimate of nothing.
+    const ownPrice = lookupPrice(model);
+    const price = ownPrice ?? (usage.total > 0 ? lookupPrice(UNPRICED_ESTIMATE_MODEL) : null);
     const breakdown = price ? costBreakdown(usage, price) : null;
     const costUSD = breakdown ? breakdown.total : 0;
-    if (!price) {
+    const viaStandIn = !ownPrice && costUSD > 0;
+    if (!ownPrice) {
+      // Coverage diagnostics keep naming the real model (Auto/default), estimate or not.
       unpriced.push(model);
     }
-    perModel.push({ model, tokens: usage, costUSD, unpriced: !price });
+    estimated = estimated || viaStandIn;
+    perModel.push({ model, tokens: usage, costUSD, unpriced: !ownPrice, ...(viaStandIn ? { estimated: true } : {}) });
     sessionTokens = addUsage(sessionTokens, usage);
     sessionCost += costUSD;
     cacheReadCostUSD += breakdown ? breakdown.cacheRead : 0;
@@ -160,6 +177,7 @@ function priceUsage(
   return {
     cost: { sessionId, tokens: sessionTokens, costUSD: sessionCost, cacheReadCostUSD, perModel, priced: perModel.length > 0, hadLog },
     unpriced,
+    estimated,
   };
 }
 
@@ -389,7 +407,12 @@ export async function enrichCosts(
     if (usageByModel.size === 0 && entry.parsed?.usageMeta?.tokensByModel) {
       usageByModel = tokensByModelUsage(entry.parsed.usageMeta.tokensByModel);
     }
-    const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    const { cost, unpriced: u, estimated } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    if (estimated) {
+      // Borrowed rates are an estimate by construction, so the report must badge them even
+      // when the adapter itself considered its token counts complete.
+      cost.usagePartial = true;
+    }
     if (entry.filePath) {
       // Same path that made hadLog/pricing true — so a consumer never sees "priced" and
       // "no file to show" disagree (see CR-002 in the file-location UI review).

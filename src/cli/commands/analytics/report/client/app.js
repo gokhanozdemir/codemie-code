@@ -836,7 +836,7 @@
       + 'The rest carry no recoverable token counts: either the native log was rotated/deleted, or the agent '
       + 'records transcripts locally but no token telemetry at all (analytics-only agents such as Cursor). '
       + 'This does not affect the cost of the sessions that are priced. See Coverage by agent below.';
-    if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Unpriced models: ' + DATA.meta.unpricedModels.join(', ') + '.';
+    if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Models with no published price (estimated at a stand-in rate when tokens were recovered): ' + DATA.meta.unpricedModels.join(', ') + '.';
     banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
 
@@ -1282,7 +1282,7 @@
     if (s.usageUnavailableReason) {
       costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">' + esc(s.usageUnavailableReason) + '</span>'));
     } else if (s.usagePartial) {
-      costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — output tokens only; this session recorded no full rollup, so cost is understated.</span>'));
+      costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — this session recorded no full token rollup, or its model has no published price and was estimated at a stand-in rate. Treat the cost as an understated API-equivalent floor, not a bill.</span>'));
     }
     var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
       ['Input', fmtTokensOf(s, t.input), ''], ['Output', fmtTokensOf(s, t.output), ''],
