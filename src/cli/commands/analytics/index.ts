@@ -14,6 +14,9 @@ import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
+import type { CostSummary, SessionCostIndex } from './cost/types.js';
+import type { CursorUsageSessions } from './cursor-usage-loader.js';
+import type { CursorUsageImport } from '../../../agents/plugins/cursor/cursor.usage-csv.js';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
@@ -74,12 +77,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       includeExternal: options.includeExternal
     });
 
-    if (rawSessions.length === 0) {
-      console.log(chalk.yellow('\nNo sessions found matching the specified criteria.'));
-      console.log(chalk.dim('Run with different filters or check that metrics are being collected.\n'));
-      return;
-    }
-
     // A report needs cost computed BEFORE aggregation so zero-delta sessions that still carry
     // real usage are retained instead of dropped as "empty".
     const wantReport = Boolean(options.report || options.reportOutput || options.open || options.reportFormat);
@@ -89,21 +86,54 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       return;
     }
 
+    // The email the report is stamped with, and the default `User` value the Cursor usage export
+    // is filtered on. Read before the import so `--cursor-usage-user` keeps its documented
+    // default in a non-interactive run; the interactive prompt for a missing one stays in the
+    // report branch, which is the only place a report filename needs it.
+    let userEmail: string | undefined;
+    try {
+      const cfg = await ConfigLoader.loadMultiProviderConfig();
+      userEmail = cfg.userEmail || undefined;
+    } catch {
+      // omit email gracefully
+    }
+
     // Cost: authoritative from the source (OTEL) when present; otherwise enrich from correlated
     // logs, but only when a report needs it. Retain zero-delta sessions with real token usage.
     let costResult = cost;
-    let keepSessionIds: Set<string> | undefined;
-    if (cost) {
-      keepSessionIds = new Set(
-        [...cost.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
-    } else if (wantReport) {
+    if (!cost && wantReport) {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
       costResult = await enrichCosts(rawSessions, realDeps);
-      keepSessionIds = new Set(
-        [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
     }
+
+    // #21/#22: the Cursor usage export, resolved here rather than inside the report branch so a
+    // run without any report flag no longer discards the flag in silence. Converted into
+    // ordinary sessions and canonical cost rows, it reaches the terminal totals, `--export` and
+    // the report from ONE place — nothing downstream needs to know the CSV exists.
+    const cursorUsage = await resolveCursorUsage(options, filter, userEmail);
+    if (cursorUsage) {
+      const { buildCursorUsageSessions } = await import('./cursor-usage-loader.js');
+      const built = buildCursorUsageSessions(
+        cursorUsage,
+        rawSessions.filter((r) => r.startEvent?.agentName === 'cursor')
+      );
+      rawSessions.push(...built.rawSessions);
+      const index = new Map([...(costResult?.index ?? []), ...built.costIndex]);
+      costResult = { index, summary: summarize(index, costResult?.summary.unpricedModels ?? []) };
+      reportCursorUsageImport(cursorUsage, built);
+    }
+
+    if (rawSessions.length === 0) {
+      console.log(chalk.yellow('\nNo sessions found matching the specified criteria.'));
+      console.log(chalk.dim('Run with different filters or check that metrics are being collected.\n'));
+      return;
+    }
+
+    // Zero-delta sessions that still carry real usage — a Cursor conversation priced only by the
+    // usage export among them — would otherwise be dropped by the aggregator as empty.
+    const keepSessionIds = costResult
+      ? new Set([...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId))
+      : undefined;
 
     // Aggregate data (normalize models unless --verbose flag is set)
     const analytics = AnalyticsAggregator.aggregate(rawSessions, !options.verbose, keepSessionIds);
@@ -145,15 +175,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         writeReportWithFallback
       } = await import('./report/report-generator.js');
 
-      // Load user email for report metadata and filename; non-fatal if config is unavailable.
-      let userEmail: string | undefined;
-      try {
-        const cfg = await ConfigLoader.loadMultiProviderConfig();
-        userEmail = cfg.userEmail || undefined;
-      } catch {
-        // omit email gracefully
-      }
-
       if (userEmail === undefined && process.stdout.isTTY) {
         console.log(chalk.yellow('\n  Warning: your email is not configured. It will be included in the report metadata and saved for future runs.'));
         try {
@@ -171,52 +192,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
             return;
           }
           throw err;
-        }
-      }
-
-      // #21/#22: the path to real Cursor tokens/cost — a local file, or the same export fetched.
-      // Both end in the SAME parser, so a downloaded export can never be interpreted differently
-      // from one the operator saved by hand.
-      let cursorUsage;
-      const wantedUser = options.cursorUsageUser ?? userEmail;
-      if (options.cursorUsageCsv) {
-        const { loadCursorUsageCsv } = await import('@/agents/plugins/cursor/cursor.usage-csv.js');
-        cursorUsage = loadCursorUsageCsv(options.cursorUsageCsv, {
-          ...(wantedUser !== undefined && { userEmail: wantedUser }),
-        }) ?? undefined;
-        if (!cursorUsage) {
-          console.log(chalk.yellow(`\n  Could not read a Cursor usage export from ${options.cursorUsageCsv}. Report continues without it.`));
-        }
-      } else if (options.cursorUsageFetch) {
-        // The only network call in the analytics path, and it needs all three of: the flag, a
-        // configured endpoint, and a signed-in Cursor. Any missing piece means no request.
-        const { readCursorSessionCookie, fetchCursorUsageExport } = await import('@/agents/plugins/cursor/cursor.usage-fetch.js');
-        const cookie = await readCursorSessionCookie();
-        cursorUsage = (await fetchCursorUsageExport({
-          enabled: true,
-          ...(process.env.CURSOR_USAGE_EXPORT_URL !== undefined && { exportUrl: process.env.CURSOR_USAGE_EXPORT_URL }),
-          ...(cookie !== undefined && { cookie }),
-          ...(wantedUser !== undefined && { userEmail: wantedUser }),
-          ...(filter.fromDate !== undefined && { startDate: filter.fromDate.toISOString().slice(0, 10) }),
-          ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
-        })) ?? undefined;
-        if (!cursorUsage) {
-          console.log(chalk.yellow('\n  Could not fetch the Cursor usage export. It needs CURSOR_USAGE_EXPORT_URL set and a signed-in'));
-          console.log(chalk.yellow('  Cursor app on this machine; the endpoint is undocumented and may have changed.'));
-          console.log(chalk.yellow('  The supported fallback is to export the CSV from the Cursor dashboard and pass --cursor-usage-csv <path>.'));
-          console.log(chalk.dim('  Run with CODEMIE_DEBUG=true to see the status code. Report continues without it.'));
-        }
-      }
-      if (cursorUsage) {
-        if (cursorUsage.events.length === 0) {
-          // The Cursor account's email is frequently NOT the CodeMie config email, which would
-          // otherwise silently filter every row away and look like an empty export.
-          console.log(chalk.yellow(`\n  Cursor usage export matched no rows for ${wantedUser ?? '(no email configured)'}.`));
-          if (cursorUsage.usersInFile.length) {
-            console.log(chalk.yellow(`  The export contains: ${cursorUsage.usersInFile.join(', ')}`));
-            console.log(chalk.yellow('  Re-run with --cursor-usage-user <email> to pick one of those.'));
-          }
-          cursorUsage = undefined;
         }
       }
 
@@ -296,6 +271,99 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     console.error(chalk.red(`\n✗ Failed to generate analytics: ${error instanceof Error ? error.message : String(error)}\n`));
     process.exit(1);
   }
+}
+
+/**
+ * The Cursor usage export for this run, from a local file or the same export fetched.
+ *
+ * Both paths end in the SAME parser, so a downloaded export can never be interpreted
+ * differently from one the operator saved by hand. Returns undefined — never throws — when no
+ * flag asked for one, when the file is unreadable, or when the user filter left nothing; every
+ * one of those says so on stdout first, because a silently ignored flag is what made this
+ * import look broken in the first place.
+ */
+async function resolveCursorUsage(
+  options: AnalyticsOptions,
+  filter: AnalyticsFilter,
+  userEmail: string | undefined
+): Promise<CursorUsageImport | undefined> {
+  const wantedUser = options.cursorUsageUser ?? userEmail;
+  let usage: CursorUsageImport | undefined;
+
+  if (options.cursorUsageCsv) {
+    const { loadCursorUsageCsv } = await import('@/agents/plugins/cursor/cursor.usage-csv.js');
+    usage = loadCursorUsageCsv(options.cursorUsageCsv, {
+      ...(wantedUser !== undefined && { userEmail: wantedUser }),
+    }) ?? undefined;
+    if (!usage) {
+      console.log(chalk.yellow(`\n  Could not read a Cursor usage export from ${options.cursorUsageCsv}. Continuing without it.`));
+    }
+  } else if (options.cursorUsageFetch) {
+    // The only network call in the analytics path, and it needs all three of: the flag, a
+    // configured endpoint, and a signed-in Cursor. Any missing piece means no request.
+    const { readCursorSessionCookie, fetchCursorUsageExport } = await import('@/agents/plugins/cursor/cursor.usage-fetch.js');
+    const cookie = await readCursorSessionCookie();
+    usage = (await fetchCursorUsageExport({
+      enabled: true,
+      ...(process.env.CURSOR_USAGE_EXPORT_URL !== undefined && { exportUrl: process.env.CURSOR_USAGE_EXPORT_URL }),
+      ...(cookie !== undefined && { cookie }),
+      ...(wantedUser !== undefined && { userEmail: wantedUser }),
+      ...(filter.fromDate !== undefined && { startDate: filter.fromDate.toISOString().slice(0, 10) }),
+      ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
+    })) ?? undefined;
+    if (!usage) {
+      console.log(chalk.yellow('\n  Could not fetch the Cursor usage export. It needs CURSOR_USAGE_EXPORT_URL set and a signed-in'));
+      console.log(chalk.yellow('  Cursor app on this machine; the endpoint is undocumented and may have changed.'));
+      console.log(chalk.yellow('  The supported fallback is to export the CSV from the Cursor dashboard and pass --cursor-usage-csv <path>.'));
+      console.log(chalk.dim('  Run with CODEMIE_DEBUG=true to see the status code. Continuing without it.'));
+    }
+  }
+
+  if (usage && usage.events.length === 0) {
+    // The Cursor account's email is frequently NOT the CodeMie config email, which would
+    // otherwise silently filter every row away and look like an empty export.
+    console.log(chalk.yellow(`\n  Cursor usage export matched no rows for ${wantedUser ?? '(no email configured)'}.`));
+    if (usage.usersInFile.length) {
+      console.log(chalk.yellow(`  The export contains: ${usage.usersInFile.join(', ')}`));
+      console.log(chalk.yellow('  Re-run with --cursor-usage-user <email> to pick one of those.'));
+    }
+    return undefined;
+  }
+
+  return usage;
+}
+
+/** What the import contributed, so the numbers below it are never unexplained. */
+function reportCursorUsageImport(usage: CursorUsageImport, built: CursorUsageSessions): void {
+  const cost = usage.hasCost ? `, $${built.summary.totalCostUSD.toFixed(2)} (Cursor's own billing)` : ', no cost column in this export';
+  console.log(
+    chalk.dim(
+      `\n  Imported ${usage.totals.events} Cursor usage event(s): ${usage.totals.tokens.total.toLocaleString('en-US')} tokens${cost}.`
+    )
+  );
+  console.log(
+    chalk.dim(
+      `  ${built.matched} attributed to a Cursor session; ${built.unmatched} in ${built.rawSessions.length} daily rollup(s) — no session window matched them unambiguously.`
+    )
+  );
+}
+
+/**
+ * Re-derive the run's rollup from the merged index rather than adding two summaries.
+ *
+ * The import OVERWRITES the cost row of any session it matched, so adding the two totals would
+ * count a matched session on both sides. Reading the merged map is exact by construction and
+ * cannot drift as either side changes. `unpricedModels` is carried over untouched: it is a
+ * distinct set that no row in the map records, and the usage export prices everything it holds.
+ */
+function summarize(index: SessionCostIndex, unpricedModels: string[]): CostSummary {
+  const rows = [...index.values()];
+  return {
+    totalCostUSD: rows.reduce((sum, c) => sum + c.costUSD, 0),
+    pricedSessions: rows.filter((c) => c.priced).length,
+    totalSessions: rows.length,
+    unpricedModels,
+  };
 }
 
 /**

@@ -27,6 +27,15 @@ export interface ModelCost {
    * `SessionCost.usagePartial`, so the figure is never read as an invoice.
    */
   estimated?: boolean;
+  /**
+   * Where this line's `costUSD` came from, when it is not CodeMie's own estimate.
+   *
+   * `'vendor-billed'` means the vendor billed this exact amount and CodeMie merely recorded it —
+   * currently only rows converted from a Cursor usage export (`cursor-usage-loader.ts`). Absent
+   * everywhere else, which keeps today's meaning — a figure computed from tokens and a pricing
+   * table — as the default rather than something every existing producer has to restate.
+   */
+  costBasis?: 'vendor-billed';
 }
 
 /** One cumulative point in a session's token & cost growth series. */

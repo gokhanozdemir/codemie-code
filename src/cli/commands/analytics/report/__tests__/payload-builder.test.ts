@@ -522,3 +522,58 @@ describe('buildPayload — copilot-cli specific fields', () => {
     expect(cov).toEqual({ agentName: 'copilot-cli', total: 3, priced: 2, withLog: 3 });
   });
 });
+
+/**
+ * A Cursor session priced from the usage export carries Cursor's own billed figures rather than
+ * a CodeMie estimate, and reaches the report through the ordinary cost index. Two things have to
+ * survive that trip: the `costBasis` tag that keeps the distinction legible, and `priced: true`,
+ * without which Coverage by agent goes on reporting Cursor as having no token data — directly
+ * contradicting the import the reader just made.
+ */
+describe('buildPayload — Cursor usage-CSV provenance', () => {
+  const cursorRoot = {
+    ...root,
+    projects: [
+      {
+        projectPath: '/repo/app',
+        branches: [{ branchName: 'main', sessions: [session({ sessionId: 'cur1', agentName: 'cursor' })] }],
+      },
+    ],
+  } as unknown as RootAnalytics;
+
+  const cursorIndex: SessionCostIndex = new Map([
+    [
+      'cur1',
+      {
+        sessionId: 'cur1',
+        tokens: { ...emptyTokens(), cacheCreation1h: 0, input: 30061, output: 1038, cacheRead: 118400, total: 149499 },
+        costUSD: 0.07,
+        perModel: [
+          {
+            model: 'auto',
+            tokens: { ...emptyTokens(), cacheCreation1h: 0, input: 30061, output: 1038, cacheRead: 118400, total: 149499 },
+            costUSD: 0.07,
+            unpriced: false,
+            costBasis: 'vendor-billed' as const,
+          },
+        ],
+        priced: true,
+        hadLog: false,
+      },
+    ],
+  ]);
+
+  it('carries costBasis through onto perModelCost', () => {
+    const payload = buildPayload(cursorRoot, cursorIndex, summary, ctxAll);
+
+    const s = payload.sessions[0];
+    expect(s.perModelCost[0]).toMatchObject({ model: 'auto', costUSD: 0.07, costBasis: 'vendor-billed' });
+  });
+
+  it('reports Cursor as priced in Coverage by agent even with no native log', () => {
+    const payload = buildPayload(cursorRoot, cursorIndex, summary, ctxAll);
+
+    const cov = payload.meta.coverage.find((c) => c.agentName === 'cursor')!;
+    expect(cov).toEqual({ agentName: 'cursor', total: 1, priced: 1, withLog: 0 });
+  });
+});

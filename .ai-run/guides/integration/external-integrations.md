@@ -313,7 +313,11 @@ tagged `native-external` and appear only with `--include-external`.
 works** — so tool-call enrichment is reliable and token/cost enrichment is usually empty. The
 supported way to recover real Cursor tokens and cost is the **dashboard usage export**
 (`--cursor-usage-csv <path>`, `src/agents/plugins/cursor/cursor.usage-csv.ts`) — a local file read
-with no credential. `Kind=Included` in that CSV is a billing category, not zero usage: verified
+with no credential. `cursor-usage-loader.ts` converts it into `RawSessionData` + a canonical
+`SessionCostIndex` — the OTEL-loader pattern — matching each event to the session whose activity
+window contains it and rolling the rest up per day, so its tokens and cost reach every report
+figure once. Those rows carry `costBasis: 'vendor-billed'` (Cursor's own billing, not a CodeMie
+estimate). `Kind=Included` in that CSV is a billing category, not zero usage: verified
 export rows marked `Included` carried 39,952,466 tokens and $25.25. Team Analytics is **not** the
 answer here and never was. Such
 sessions carry `usageUnavailableReason` and render as an em dash, never as `$0`, `Included`, or
