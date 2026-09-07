@@ -27,6 +27,9 @@ codemie analytics --report --report-format both
 
 # Include ALL local agent usage — also the sessions you ran outside CodeMie
 codemie analytics --report --open --include-external
+
+# Add your own Cursor Team Analytics aggregates (opt-in; makes a network call)
+CURSOR_TEAM_ANALYTICS_API_KEY=... codemie analytics --report --open --cursor-team-analytics
 ```
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
@@ -38,7 +41,7 @@ codemie analytics --report --open --include-external
 
 ## What the Report Covers
 
-The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex, Gemini, OpenCode, Pi, GitHub Copilot CLI, and the built-in agent — plus native agent logs it discovers automatically on disk. It builds a single portable HTML file with **nine interactive views**, grouped in the sidebar as *Insights*, *Spend*, and *Raw*.
+The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex, Gemini, OpenCode, Pi, GitHub Copilot CLI, and the built-in agent — plus native agent logs it discovers automatically on disk. It builds a single portable HTML file with **nine interactive views**, grouped in the sidebar as *Insights*, *Spend*, and *Raw*, plus an optional tenth ([Cursor Team API](#cursor-team-analytics)) that appears only when you opt into that remote pull.
 
 Discovered sessions that CodeMie did not launch are **excluded by default**; see [Session provenance](#session-provenance).
 
@@ -55,11 +58,11 @@ The landing view. Gives every headline number at a glance:
 - **Sessions** — total count with wall-clock duration and turns per session
 - **Files & lines** — file operations, lines added/removed, net change
 - **Tool calls** — total calls and overall success rate
-- **Estimated cost** — API-equivalent spend across priced sessions
+- **Estimated cost** — API-equivalent spend across priced sessions; `—` when nothing in view is measurable (see [When cost and tokens show `—`](#unknown-cost))
 
 Below the headline KPIs, two supplementary sections appear:
 
-**Token usage** breaks down input tokens, output tokens, cache writes (tokens written to the prompt cache), and cache reads (tokens served back from cache), plus a combined total.
+**Token usage** breaks down input tokens, output tokens, cache writes (tokens written to the prompt cache), and cache reads (tokens served back from cache), plus a combined total. When no session in view has any token signal, these show `—` with a note explaining that local token telemetry is absent — see [Analytics-only agents](#analytics-only-agents).
 
 **Efficiency summary** shows cache-read cost, bloat percentage (cache reads as a share of total spend), dead session count, and average context per call — all linking to the Efficiency tab for full detail.
 
@@ -143,7 +146,7 @@ Metrics shown are generic per-session metrics aggregated by source — **no fram
 
 ![Cost](assets/analytics-report-cost.png)
 
-Estimated API-equivalent spend (token usage × model pricing). If you use Claude on a subscription, you don't pay per token — this view shows the equivalent metered-API value for benchmarking against alternatives or tracking consumption trends.
+Estimated API-equivalent spend (token usage × model pricing) — what the same usage would have been metered at through the API. It is a benchmark for comparing agents and tracking consumption trends, **not an invoice**, and it is never presented as one.
 
 > **Why this reads lower than the terminal's live cost.** Cost here is counted **per API response**: each response's token usage is priced exactly once, matching how the provider bills and how Claude Code's own telemetry (`cost.usage`) records it. A single response is written to the native log across several lines (e.g. a `thinking` line and a `tool_use` line, each repeating the same usage), and the live statusline in the terminal sums those lines — so it over-counts multi-part responses and shows a higher number. For sessions heavy on extended thinking plus tool use, expect the report total to sit noticeably below the live statusline; the report figure is the authoritative, de-duplicated one.
 
@@ -154,6 +157,35 @@ Key elements:
 - **Cost by agent** — doughnut chart
 - **Cost by model** — horizontal bar chart of USD spend per model
 - **Most expensive sessions** — top 10 ranked by cost, with per-session token breakdown (input, output, cached)
+
+<a id="unknown-cost"></a>
+
+#### When cost and tokens show `—`
+
+A dash means **unmeasurable**, not free and not zero. It appears when a session left no readable
+local token signal — the native log was rotated away, or the agent records transcripts but no token
+telemetry at all (see [Analytics-only agents](#analytics-only-agents)).
+
+The report will not paper over that gap:
+
+- Unmeasurable sessions render `—` for cost and for every token field, never `$0.00` or `0`. A
+  structural zero and a genuine zero look different because they mean different things.
+- Aggregates dash out only when **nothing** in the group was measurable. A mixed group still shows
+  the real sum of whatever was measured, so known data is never hidden by unknown peers.
+- No cell is ever labelled `Included` or "covered by subscription". Your plan's billing status is
+  not something the local logs record, and absence of a token count is not evidence of free usage.
+
+#### Estimated costs and the partial badge
+
+When a session has real recovered tokens but its model is not in the pricing table — Cursor's
+`Auto`, or simply a model newer than the table — the cost is estimated at a published **Claude
+Sonnet** API rate rather than dropped to `$0`. Such sessions:
+
+- keep their own model label (`Auto` stays `Auto`; nothing is renamed to Sonnet),
+- are marked **partial usage** in the session detail modal, and
+- are still listed under "models with no published price" in the Cost coverage banner.
+
+Treat any partial figure as an understated floor, not a measurement.
 
 ---
 
@@ -235,13 +267,37 @@ CodeMie merges two sources to give the most complete picture:
 
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
 2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
-3. **Analytics-only agents** — agents CodeMie never launches and only reads. `cursor` is the one today: its conversations are read from Cursor's own local stores and surfaced like any other external session. See [Cursor Integration](CURSOR_INTEGRATION.md).
+3. **Analytics-only agents** — agents CodeMie never launches and only reads. `cursor` is the one today: its conversations are read from Cursor's own local stores and surfaced like any other external session. See [Cursor Integration](CURSOR_INTEGRATION.md) and [Analytics-only agents](#analytics-only-agents) below.
 
 Pass `--no-scan-native` to disable native-log discovery and use only CodeMie-tracked sessions.
 
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
 
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
+
+<a id="analytics-only-agents"></a>
+
+### Analytics-only agents (Cursor) — expect no token counts
+
+Cursor is read, never launched. Its transcripts, tool outcomes, projects, and models all come
+through, but **recent Cursor builds record no billable token counts** — they write zero, or omit the
+field entirely, while tool-call data keeps working. This is Cursor's behaviour, not a CodeMie bug.
+
+What that looks like in the report:
+
+- Cursor sessions appear (with `--include-external`) with real turns, tool calls, and file activity.
+- Their cost and token cells are `—`, per [When cost and tokens show `—`](#unknown-cost).
+- **If you deselect every other agent in the top bar, the Overview and Cost KPIs go all-dashes and
+  show a short note saying local token telemetry is absent for the sessions in view.** That is the
+  filter working correctly on absent data — not a broken agent chip. Tool-call tables keep working.
+
+A measurement taken on one machine: of 469 discovered Cursor sessions, 0 carried any token signal
+and 24 carried tool calls. Conversations that *do* still hold token counts were all roughly a year
+old and no longer discoverable at all. There is no local store that has the recent numbers — every
+Cursor database, per-session chat store, and transcript directory was checked. CodeMie will not
+manufacture the figure from context-window fill, transcript length, or tool-call counts, because
+those are not billable tokens and presenting them as such would trade an honest blank for a
+confident wrong number.
 
 <a id="session-provenance"></a>
 
@@ -271,6 +327,50 @@ Two things to know before you rely on the wider number:
 - **`--include-external` needs native scanning.** External sessions *are* discovered natives, so `--no-scan-native --include-external` adds nothing — the first flag suppresses the very sessions the second one asks for.
 
 `--include-external` applies to the default local-session source only. The `analytics otel` subcommand does not accept it — an OTEL events file has no notion of CodeMie ownership.
+
+<a id="cursor-team-analytics"></a>
+
+### Cursor Team Analytics (optional, opt-in, network)
+
+Everything above reads local files. This one feature does not: it pulls your own aggregates from
+**Cursor's Enterprise Team Analytics API**. It is off unless you explicitly ask for it.
+
+```bash
+export CURSOR_TEAM_ANALYTICS_API_KEY='<your Cursor Team API key>'
+codemie analytics --report --open --cursor-team-analytics
+```
+
+**Both the flag and the key are required.** A key sitting in your environment never triggers a call
+on its own, and neither does the flag without a key. Reading the machine you are on is a promise
+CodeMie already makes; calling a remote service is not, so it stays a deliberate act each time.
+
+**What you get.** Four `by-user` endpoints — agent edits, tab completions, models, and commands —
+filtered to your own email address, rendered in their own **Cursor Team API** view in the sidebar.
+The view is hidden entirely unless a pull succeeded.
+
+**What you do not get: tokens or cost.** None of Cursor's documented endpoints returns a token or
+cost field at any tier, so this cannot close the gap described in
+[Analytics-only agents](#analytics-only-agents), and it is never presented as if it did. The rows
+are edit and activity counters only.
+
+**It is shown separately on purpose.** The API returns per-user/per-date aggregates with no session
+identifier, so there is no key on which to join them to your local Cursor sessions — and no token or
+cost field to join with. Merging them into the session table would mean inventing both. Nothing in
+this section contributes to any cost or token figure elsewhere in the report.
+
+**Scope and privacy.** Only `by-user` endpoints are queried, always filtered to the requesting
+user's own email. No team-wide endpoint and no leaderboard, so a colleague's activity can never
+appear in your personal report. The email comes from your CodeMie config — the same one embedded in
+report metadata.
+
+**Requirements and failure modes.** You need an admin-scoped Cursor **Team** API key from an
+enterprise team; individual and personal plans cannot use this API at all. Every failure — missing
+key, rejected key, HTTP error, DNS failure, or a schema change on Cursor's side — degrades to an
+omitted or explicitly-partial section and prints a one-line notice. The local report, which is the
+part that always works, is never taken down by a remote outage. Run with `CODEMIE_DEBUG=true` to see
+the per-endpoint outcome.
+
+---
 
 ### OTEL events file (`analytics otel`)
 
@@ -312,12 +412,24 @@ Source flags:
   --no-scan-native          Skip native-log discovery (CodeMie-tracked sessions only)
   --include-external        Also count local sessions CodeMie did not launch
                             (see "Session provenance"; requires native scanning)
+  --cursor-team-analytics   Fetch your own Cursor Team Analytics aggregates.
+                            Makes a NETWORK CALL; also requires
+                            CURSOR_TEAM_ANALYTICS_API_KEY. Neither the flag nor
+                            the key does anything on its own.
+                            (see "Cursor Team Analytics")
 
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
   --export <fmt>            Export terminal data to json or csv file
   -o, --output <path>       Output path for --export
 ```
+
+**Environment variables**
+
+| Variable | Effect |
+|---|---|
+| `CURSOR_TEAM_ANALYTICS_API_KEY` | Admin-scoped Cursor Team API key. Required *together with* `--cursor-team-analytics`; see [Cursor Team Analytics](#cursor-team-analytics). |
+| `CODEMIE_DEBUG=true` | Verbose per-source discovery and enrichment logging, including each Team Analytics endpoint's outcome. |
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external`, `--no-scan-native`, and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 
