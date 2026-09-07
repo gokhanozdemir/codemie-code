@@ -3,7 +3,6 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
@@ -82,12 +81,6 @@ export interface ReportMeta {
   unpricedModels: string[];
   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
   userEmail?: string;   // identity of the report owner; absent when not authenticated
-  /**
-   * Optional Cursor usage-events CSV import — the only source of real Cursor tokens and cost.
-   * Kept beside the sessions rather than inside them: its rows are per-event with no composerId,
-   * so there is no key to join on, and its totals must never be silently added to session costs.
-   */
-  cursorUsage?: CursorUsageImport;
   periodStart?: string; // ISO — start of the reported range; always present when the report contains any sessions
   periodEnd?: string;   // ISO — end of the reported range; always present when the report contains any sessions
 }

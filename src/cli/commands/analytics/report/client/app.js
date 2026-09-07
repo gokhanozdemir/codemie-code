@@ -824,70 +824,6 @@
     host.appendChild(changeCard);
   };
 
-  /**
-   * Cursor usage-events CSV — the only source of real Cursor tokens and cost.
-   *
-   * Cursor's local stores stopped recording billable tokens, so the session table shows dashes
-   * for Cursor. This section fills that in from the operator's dashboard export. It stays a
-   * SEPARATE section because the export's rows are per-event with no composerId: there is no key
-   * to join them to sessions on, so adding these totals to the session costs would be inventing
-   * an attribution. Read them side by side, not summed.
-   *
-   * The figures here are Cursor's own, not CodeMie estimates — no stand-in rate is involved.
-   */
-  VIEWS.cursorusage = function (host) {
-    var u = DATA.meta.cursorUsage;
-    host.appendChild(el('h2', 'view-title', 'Cursor Usage CSV'));
-    if (!u) {
-      host.appendChild(el('p', 'view-sub', 'No usage export imported for this report.'));
-      host.appendChild(el('div', 'empty', 'Export your usage from the Cursor dashboard (Usage \u2192 Export) and re-run with --cursor-usage-csv &lt;path&gt; to see real Cursor tokens and cost here.'));
-      return;
-    }
-    var days = u.byDay || [];
-    var range = days.length ? (days[0].day + ' \u2192 ' + days[days.length - 1].day) : 'no dated rows';
-    host.appendChild(el('p', 'view-sub', fmtNum(u.totals.events) + ' usage events \u00b7 ' + esc(range) + (u.usersInFile && u.usersInFile.length === 1 ? ' \u00b7 ' + esc(u.usersInFile[0]) : '')));
-
-    // The single most important thing a reader can misunderstand about this data.
-    host.appendChild(el('div', 'alert alert-info', 'Cursor\u2019s own figures, imported from your dashboard export \u2014 not a CodeMie estimate. Rows marked <strong>Included</strong> are covered by your Cursor plan, which is a billing category, not zero usage: they still carry real tokens and cost, and both are counted here. This tab is the per-event detail. Every one of these events is also counted once as an ordinary session elsewhere in the report \u2014 attributed to the Cursor session whose activity window contains it, or, when no single window does, to a <strong>Cursor usage \u2014 &lt;date&gt;</strong> daily rollup \u2014 so the Overview, Cost and Tools figures all include them.'));
-
-    var kpis = [
-      ['Events', fmtNum(u.totals.events)],
-      ['Total tokens', fmtTokens(u.totals.tokens.total)],
-      ['Cost', u.hasCost ? fmtUSD(u.totals.costUSD) : UNKNOWN_LABEL]
-    ];
-    var grid = el('div', 'kpi-grid'); grid.style.gridTemplateColumns = 'repeat(3,1fr)';
-    kpis.forEach(function (k) {
-      var c = el('div', 'kpi');
-      c.appendChild(el('div', 'kpi-label', k[0]));
-      c.appendChild(el('div', 'kpi-value', k[1]));
-      grid.appendChild(c);
-    });
-    host.appendChild(grid);
-    if (!u.hasCost) {
-      host.appendChild(el('div', 'alert alert-warning', 'This export variant has no Cost column (it ships Requests instead), so cost shows as a dash. The token counts are unaffected.'));
-    }
-
-    // The by-model and by-day tables are the same table over the same bucket shape; only the
-    // first column differs. One builder keeps their columns and money handling from drifting.
-    var tokCols = ['Input', 'Cache write', 'Cache read', 'Output', 'Total'];
-    function money(n) { return u.hasCost ? fmtUSD(n) : UNKNOWN_LABEL; }
-    function bucketTable(title, sub, keyLabel, keyOf, buckets) {
-      var c = card(title, sub);
-      c._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
-        [keyLabel, 'Events'].concat(tokCols).concat(['Cost']),
-        (buckets || []).map(function (b) {
-          var t = b.tokens;
-          return [esc(keyOf(b) || '\u2014'), fmtNum(b.events),
-            fmtTokens(t.input), fmtTokens(t.cacheCreation), fmtTokens(t.cacheRead), fmtTokens(t.output), fmtTokens(t.total),
-            money(b.costUSD)];
-        })
-      ) + '</div>';
-      host.appendChild(c);
-    }
-    bucketTable('By model', 'as reported by Cursor', 'Model', function (b) { return b.model; }, u.byModel);
-    bucketTable('By day', 'export rows grouped by date', 'Day', function (b) { return b.day; }, days);
-  };
-
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
     host.appendChild(el('p', 'view-sub', 'Estimated cost (API-equivalent) — token usage × model pricing. This is what the same usage would have been metered at through the API, not an invoice.'));
@@ -1527,10 +1463,6 @@
     root.innerHTML = '';
     (VIEWS[state.view] || VIEWS.overview)(root, filtered());
     document.querySelectorAll('.nav-i').forEach(function (n) { n.classList.toggle('active', n.getAttribute('data-view') === state.view); });
-    // The remote-source view is opt-in; without a pull there is nothing to navigate to.
-    document.querySelectorAll('.nav-i[data-optional]').forEach(function (n) {
-      if (n.getAttribute('data-view') === 'cursorusage' && !DATA.meta.cursorUsage) n.style.display = 'none';
-    });
   }
 
   function buildControls() {
