@@ -36,7 +36,7 @@ export interface CursorComposerHeader {
   branch?: string;
   /** Epoch ms the conversation was created, when recorded. */
   createdAt?: number;
-  /** Epoch ms the conversation was last updated, when recorded. */
+  /** Epoch ms the conversation was last updated (`lastUpdatedAt`), when recorded. */
   updatedAt?: number;
   /** Total lines added across the conversation, when recorded. */
   linesAdded?: number;
@@ -58,6 +58,7 @@ interface ComposerRow {
   activeBranch?: unknown;
   createdOnBranch?: unknown;
   createdAt?: unknown;
+  lastUpdatedAt?: unknown;
   updatedAt?: unknown;
   totalLinesAdded?: unknown;
   totalLinesRemoved?: unknown;
@@ -137,7 +138,10 @@ function normalizeHeader(source: ComposerRow): Omit<CursorComposerHeader, 'compo
     projectPath: extractProjectPath(source.workspaceIdentifier),
     branch: extractBranch(source),
     createdAt: asEpochMs(source.createdAt),
-    updatedAt: asEpochMs(source.updatedAt),
+    // `lastUpdatedAt` is the name Cursor's own rows use; `updatedAt` is only a fallback for a
+    // build that spells it the obvious way. Reading solely `updatedAt` — as this did — found
+    // nothing on any real row and collapsed every Cursor session to a zero-length window.
+    updatedAt: asEpochMs(source.lastUpdatedAt) ?? asEpochMs(source.updatedAt),
     linesAdded: asNumber(source.totalLinesAdded),
     linesRemoved: asNumber(source.totalLinesRemoved),
     filesChangedCount: asNumber(source.filesChangedCount),
