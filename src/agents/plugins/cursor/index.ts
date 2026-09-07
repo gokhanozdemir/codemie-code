@@ -1,5 +1,10 @@
 export { CursorPlugin, CursorPluginMetadata } from './cursor.plugin.js';
-export { CURSOR_AGENT_NAME, CURSOR_DISPLAY_NAME, CURSOR_UNKNOWN_MODEL } from './cursor.constants.js';
+export {
+  CURSOR_AGENT_NAME,
+  CURSOR_AUTO_MODEL_LABEL,
+  CURSOR_AUTO_MODEL_SENTINEL,
+  CURSOR_DISPLAY_NAME,
+} from './cursor.constants.js';
 export { CursorSessionAdapter } from './cursor.session.js';
 export { getCursorHome, getCursorProjectsRoot, getCursorTrackingDbPath } from './cursor.paths.js';
 export { readCursorTrackingIndex } from './cursor.tracking-db.js';

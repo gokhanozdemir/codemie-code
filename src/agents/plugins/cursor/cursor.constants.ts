@@ -12,8 +12,19 @@ export const CURSOR_AGENT_NAME = 'cursor';
 export const CURSOR_DISPLAY_NAME = 'Cursor';
 
 /**
- * Cursor records a model of `default` when the user left model selection to Cursor. That
- * string names no model, so it is dropped rather than reported — see the honest-gaps note
- * in `cursor.session.ts`.
+ * What Cursor's AI-tracking database writes when the user left model choice to Cursor.
+ *
+ * It names no model, so it must never be reported as one — the report would be claiming a
+ * model Cursor never recorded.
  */
-export const CURSOR_UNKNOWN_MODEL = 'default';
+export const CURSOR_AUTO_MODEL_SENTINEL = 'default';
+
+/**
+ * How Cursor itself labels that mode.
+ *
+ * Cursor's own usage export writes `auto` in its Model column for exactly the conversations the
+ * local database marks `default`, so "Auto" is Cursor's word rather than our invention. Showing
+ * it beats showing a blank: "Auto" says the user delegated the choice, where a blank would
+ * suggest CodeMie failed to read something.
+ */
+export const CURSOR_AUTO_MODEL_LABEL = 'Auto';

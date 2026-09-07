@@ -17,7 +17,7 @@
 
 import { existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
-import { CURSOR_UNKNOWN_MODEL } from './cursor.constants.js';
+import { CURSOR_AUTO_MODEL_LABEL, CURSOR_AUTO_MODEL_SENTINEL } from './cursor.constants.js';
 import { getCursorTrackingDbPath } from './cursor.paths.js';
 
 /** What the tracking database knows about one conversation. */
@@ -29,9 +29,12 @@ export interface CursorConversationActivity {
   /** Absolute paths Cursor recorded itself as having written in this conversation. */
   files: string[];
   /**
-   * Models Cursor attributed edits to. Never contains the literal `default`, which names no
-   * model — a session whose only recorded model was `default` is reported as unknown rather
-   * than being stamped with whatever model Cursor happens to default to today.
+   * Models Cursor attributed edits to.
+   *
+   * The literal `default` never appears: it is Cursor's sentinel for delegated model choice and
+   * names no model, so it is reported as `Auto` — the term Cursor's own usage export uses for
+   * the same conversations. What is never done is stamping the session with whatever model
+   * Cursor happens to default to today.
    */
   models: string[];
 }
@@ -126,8 +129,11 @@ export async function readCursorTrackingIndex(
         entry.files.push(file);
       }
 
-      const model = asString(row.model);
-      if (model && model !== CURSOR_UNKNOWN_MODEL && !entry.models.includes(model)) {
+      // `default` is Cursor's sentinel for "you pick" — reported under the name Cursor's own
+      // dashboard gives it rather than dropped, so the row reads "Auto" instead of blank.
+      const raw = asString(row.model);
+      const model = raw === CURSOR_AUTO_MODEL_SENTINEL ? CURSOR_AUTO_MODEL_LABEL : raw;
+      if (model && !entry.models.includes(model)) {
         entry.models.push(model);
       }
 
