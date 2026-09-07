@@ -910,26 +910,25 @@
       host.appendChild(el('div', 'alert alert-warning', 'This export variant has no Cost column (it ships Requests instead), so cost shows as a dash. The token counts are unaffected.'));
     }
 
+    // The by-model and by-day tables are the same table over the same bucket shape; only the
+    // first column differs. One builder keeps their columns and money handling from drifting.
     var tokCols = ['Input', 'Cache write', 'Cache read', 'Output', 'Total'];
-    function tokCells(t) { return [fmtTokens(t.input), fmtTokens(t.cacheCreation), fmtTokens(t.cacheRead), fmtTokens(t.output), fmtTokens(t.total)]; }
-
-    var mCard = card('By model', 'as reported by Cursor');
-    mCard._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
-      ['Model', 'Events'].concat(tokCols).concat(['Cost']),
-      (u.byModel || []).map(function (m) {
-        return [esc(m.model || '\u2014'), fmtNum(m.events)].concat(tokCells(m.tokens)).concat([u.hasCost ? fmtUSD(m.costUSD) : UNKNOWN_LABEL]);
-      })
-    ) + '</div>';
-    host.appendChild(mCard);
-
-    var dCard = card('By day', 'export rows grouped by date');
-    dCard._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
-      ['Day', 'Events'].concat(tokCols).concat(['Cost']),
-      days.map(function (d) {
-        return [esc(d.day), fmtNum(d.events)].concat(tokCells(d.tokens)).concat([u.hasCost ? fmtUSD(d.costUSD) : UNKNOWN_LABEL]);
-      })
-    ) + '</div>';
-    host.appendChild(dCard);
+    function money(n) { return u.hasCost ? fmtUSD(n) : UNKNOWN_LABEL; }
+    function bucketTable(title, sub, keyLabel, keyOf, buckets) {
+      var c = card(title, sub);
+      c._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
+        [keyLabel, 'Events'].concat(tokCols).concat(['Cost']),
+        (buckets || []).map(function (b) {
+          var t = b.tokens;
+          return [esc(keyOf(b) || '\u2014'), fmtNum(b.events),
+            fmtTokens(t.input), fmtTokens(t.cacheCreation), fmtTokens(t.cacheRead), fmtTokens(t.output), fmtTokens(t.total),
+            money(b.costUSD)];
+        })
+      ) + '</div>';
+      host.appendChild(c);
+    }
+    bucketTable('By model', 'as reported by Cursor', 'Model', function (b) { return b.model; }, u.byModel);
+    bucketTable('By day', 'export rows grouped by date', 'Day', function (b) { return b.day; }, days);
   };
 
   VIEWS.cost = function (host, fs) {
