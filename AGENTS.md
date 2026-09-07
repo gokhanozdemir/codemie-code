@@ -223,7 +223,7 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
 | `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |
 | `copilot-cli` | `copilot-cli/` | `@github/copilot` | Managed agent (installed, configured, and launched by CodeMie); session metrics + backend conversation sync via its own processors |
-| `cursor` | `cursor/` | none | Analytics-only agent (`analyticsOnly: true`) — never installed or launched by CodeMie; reads Cursor's locally persisted agent transcripts, enriched read-only from Cursor's AI-tracking database, and surfaces them as external sessions (opt-in behind `--include-external`, like any session CodeMie did not launch) |
+| `cursor` | `cursor/` | none | Analytics-only agent (`analyticsOnly: true`) — never installed or launched by CodeMie; reads Cursor's locally persisted agent transcripts, enriched read-only from Cursor's AI-tracking database, and surfaces them as external sessions (opt-in behind `--include-external`, like any session CodeMie did not launch). See `docs/CURSOR_INTEGRATION.md` |
 
 Not agent adapters, but injected runtime plugins under the same tree: `codemie-code-hooks/` (injected into `codemie-code` and `opencode`) and `reasoning-sanitizer/` (injected into `codemie-code`).
 

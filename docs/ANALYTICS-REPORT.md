@@ -235,6 +235,7 @@ CodeMie merges two sources to give the most complete picture:
 
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
 2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
+3. **Analytics-only agents** — agents CodeMie never launches and only reads. `cursor` is the one today: its conversations are read from Cursor's own local stores and surfaced like any other external session. See [Cursor Integration](CURSOR_INTEGRATION.md).
 
 Pass `--no-scan-native` to disable native-log discovery and use only CodeMie-tracked sessions.
 
@@ -262,7 +263,7 @@ That default is the right one for adoption reporting and the **wrong** one for c
 codemie analytics --report --open --include-external
 ```
 
-**This is the flag that shows all of your local agent usage.** GitHub Copilot CLI sessions are included in the gate, so they too are absent from the default report.
+**This is the flag that shows all of your local agent usage.** GitHub Copilot CLI sessions are included in the gate, so they too are absent from the default report. Cursor sessions are too — CodeMie never launches Cursor, so *every* Cursor session is external; see [Cursor Integration](CURSOR_INTEGRATION.md).
 
 Two things to know before you rely on the wider number:
 
