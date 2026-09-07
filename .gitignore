@@ -89,3 +89,5 @@ docs/superpowers/tasks/*/code-review*.diff
 /docs/superpowers/resume/
 /docs/superpowers/review-prompts/
 /docs/codemie/analytics/
+
+.scratch/
