@@ -105,28 +105,43 @@ function sameDir(a: string | undefined, b: string): boolean {
  * still beats a wrong answer.
  */
 function projectPathFromSlug(slug: string, cache?: Map<string, string | undefined>): string | undefined {
-  const cached = cache?.get(slug);
-  if (cached !== undefined || cache?.has(slug)) {
-    return cached;
+  if (cache?.has(slug)) {
+    return cache.get(slug);
   }
-  const resolved = descendMatchingSlug(sep, slug.split('-'));
+  const matches = descendMatchingSlug(sep, slug.split('-'));
+  if (matches.length > 1) {
+    logger.debug(`[cursor-discovery] slug ${slug} matches ${matches.length} directories — reporting no project`);
+  }
+  const resolved = matches.length === 1 ? matches[0] : undefined;
   cache?.set(slug, resolved);
   return resolved;
 }
 
 /**
- * Deepest existing directory reached by consuming every token of a slug.
+ * Every existing directory reachable by consuming a slug whole, stopping at two.
  *
- * A child matches when its own name, slugified, equals the tokens it would have to account
- * for. Recursion (rather than a single greedy pass) is what makes `foo-bar/baz` and
- * `foo/bar-baz` both reachable from `foo-bar-baz`; the first branch that consumes the slug
- * whole wins, and there is only ever one such branch on a real filesystem.
+ * A child matches when its own name, slugified, equals the tokens it would have to account for.
+ * Recursion (rather than a single greedy pass) is what makes `foo-bar/baz` and `foo/bar-baz`
+ * both reachable from `foo-bar-baz`.
+ *
+ * More than one branch can succeed, because `/`, `_` and `-` all slugify to `-`: with both
+ * `~/work/my_app` and `~/work/my-app` on disk, one slug describes them equally well. Collecting
+ * a second match is how the caller learns to stay silent — attributing a session confidently to
+ * the wrong project is worse than reporting none. Two is enough to know it is ambiguous, and
+ * stopping there keeps the walk from exploring a tree it has already disqualified.
+ *
+ * Terminating: every step consumes at least one token, so depth is bounded by the token count
+ * even if a symlink points back up the tree.
  */
-function descendMatchingSlug(dir: string, tokens: string[]): string | undefined {
+function descendMatchingSlug(dir: string, tokens: string[], found: string[] = []): string[] {
   if (tokens.length === 0) {
-    return dir;
+    found.push(dir);
+    return found;
   }
   for (const name of readDirNames(dir)) {
+    if (found.length >= 2) {
+      break;
+    }
     const nameTokens = slugForPath(name).split('-');
     if (nameTokens.length > tokens.length) {
       continue;
@@ -134,12 +149,9 @@ function descendMatchingSlug(dir: string, tokens: string[]): string | undefined 
     if (!nameTokens.every((token, i) => token === tokens[i])) {
       continue;
     }
-    const found = descendMatchingSlug(join(dir, name), tokens.slice(nameTokens.length));
-    if (found) {
-      return found;
-    }
+    descendMatchingSlug(join(dir, name), tokens.slice(nameTokens.length), found);
   }
-  return undefined;
+  return found;
 }
 
 /** The slug Cursor would have written for a directory: leading separator dropped, `/` and `_` → `-`. */
@@ -245,7 +257,10 @@ function activityWindow(
   filePath: string,
   activity: CursorConversationActivity | undefined
 ): { createdAt: number; updatedAt: number } | undefined {
-  const stamps = activity?.firstEditMs === undefined ? transcriptStampWindow(filePath) : undefined;
+  // Either end can be missing on its own — a database row can record a first edit and no last —
+  // so the stamps are read whenever either end is still open, not only when both are.
+  const needsStamps = activity?.firstEditMs === undefined || activity?.lastEditMs === undefined;
+  const stamps = needsStamps ? transcriptStampWindow(filePath) : undefined;
   const createdAt = activity?.firstEditMs ?? stamps?.firstMs;
   const updatedAt = activity?.lastEditMs ?? stamps?.lastMs;
 
@@ -383,6 +398,16 @@ export class CursorSessionAdapter implements SessionAdapter {
   private processors: SessionProcessor[] = [];
 
   /**
+   * Slug → project path, for this adapter's lifetime.
+   *
+   * Resolving a slug walks the filesystem from the root, and every conversation in a project
+   * repeats the same slug — so without this a run pays for the walk once per session rather
+   * than once per project. The adapter is memoized per run, which is exactly the scope the
+   * answer is stable over.
+   */
+  private readonly slugPaths = new Map<string, string | undefined>();
+
+  /**
    * Enrichment from `~/.cursor/ai-tracking/ai-code-tracking.db`, keyed by conversation id.
    *
    * Memoized as the in-flight promise rather than the resolved map so that discovery and every
@@ -450,9 +475,6 @@ export class CursorSessionAdapter implements SessionAdapter {
     const tracking = await this.trackingIndex();
 
     const results: SessionDescriptor[] = [];
-    // Resolving a slug walks the filesystem, and every conversation in a project repeats the
-    // same slug, so the answer is worked out once per project per run.
-    const slugPaths = new Map<string, string | undefined>();
 
     for (const slug of readDirNames(root)) {
       const transcriptsRoot = join(root, slug, TRANSCRIPTS_DIR);
@@ -461,7 +483,7 @@ export class CursorSessionAdapter implements SessionAdapter {
       }
 
       for (const conversationId of readDirNames(transcriptsRoot)) {
-        const descriptor = this.describeConversation(transcriptsRoot, conversationId, slug, tracking, slugPaths);
+        const descriptor = this.describeConversation(transcriptsRoot, conversationId, slug, tracking);
         if (!descriptor || descriptor.createdAt < cutoffMs) {
           continue;
         }
@@ -494,8 +516,7 @@ export class CursorSessionAdapter implements SessionAdapter {
     transcriptsRoot: string,
     conversationId: string,
     slug: string,
-    tracking: CursorTrackingIndex,
-    slugPaths: Map<string, string | undefined>
+    tracking: CursorTrackingIndex
   ): SessionDescriptor | undefined {
     const filePath = join(transcriptsRoot, conversationId, `${conversationId}.jsonl`);
     if (!existsSync(filePath)) {
@@ -514,7 +535,7 @@ export class CursorSessionAdapter implements SessionAdapter {
       sessionId: conversationId,
       filePath,
       projectPath:
-        projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, slugPaths),
+        projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, this.slugPaths),
       createdAt: window.createdAt,
       updatedAt: window.updatedAt,
       agentName: this.agentName,
@@ -538,7 +559,8 @@ export class CursorSessionAdapter implements SessionAdapter {
 
     const window = activityWindow(filePath, activity);
     const slug = slugOfTranscript(filePath);
-    const projectPath = projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug);
+    const projectPath =
+      projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, this.slugPaths);
 
     logger.debug(
       `[cursor-adapter] ${conversationId}: ${messages.length} message(s), ${userPrompts.length} prompt(s)`
