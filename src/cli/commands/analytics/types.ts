@@ -256,7 +256,6 @@ export interface AnalyticsOptions {
    * aggregates. Requires CURSOR_TEAM_ANALYTICS_API_KEY as well — the flag alone makes no call,
    * and neither does the credential alone.
    */
-  cursorTeamAnalytics?: boolean;
   /** Path to a Cursor usage-events CSV exported from the Cursor dashboard (no network call). */
   cursorUsageCsv?: string;
   /**
