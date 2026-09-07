@@ -368,8 +368,8 @@ describe('loadNativeSessions — Cursor degrades to transcript-only rows', () =>
     expect(row.sessionId).toBe('conv-a');
     expect(row.deltas[0].models).toEqual([]);
     expect(row.deltas[0].fileOperations).toEqual([]);
-    // No database means no project attribution either — reported as unknown, never guessed.
-    expect(row.startEvent!.data.workingDirectory).toBe('Unknown');
+    // The project still resolves without a database: the slug is walked against the filesystem.
+    expect(row.startEvent!.data.workingDirectory).toBe(projectDir);
     // The window falls back to the transcript file's own birth/modification times.
     expect(row.startEvent!.data.startTime).toBeGreaterThan(0);
   });
@@ -446,5 +446,106 @@ describe('loadNativeSessions — Cursor never reports tokens, cost or line count
     expect(operation.linesAdded).toBeUndefined();
     expect(operation.linesRemoved).toBeUndefined();
     expect(operation.linesModified).toBeUndefined();
+  });
+});
+
+/**
+ * Cursor's project slug is lossy — it replaces `/` and `_` alike with `-` — so a slug cannot be
+ * reversed by splitting on `-`. Nearly every real project trips this: a home directory like
+ * `/Users/ada_lovelace` or any project named `claude-code-router` de-slugs to a path that does
+ * not exist, and the session loses its project. These tests pin the recovery, and they use no
+ * tracking database on purpose: the database covers only the conversations it recorded edits
+ * for, so the slug is the only project signal the majority of sessions have.
+ */
+describe('loadNativeSessions — Cursor project attribution from a lossy slug', () => {
+  it('recovers a project whose directory name contains a hyphen', async () => {
+    const project = join(projectDir, 'claude-code-router');
+    mkdirSync(project, { recursive: true });
+    writeTranscript('conv-hyphen', conversation('ship it'), slugForPath(project));
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.workingDirectory).toBe(project);
+  });
+
+  it('recovers a project whose path contains an underscore', async () => {
+    const project = join(projectDir, 'my_project');
+    mkdirSync(project, { recursive: true });
+    writeTranscript('conv-underscore', conversation('ship it'), slugForPath(project));
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.workingDirectory).toBe(project);
+  });
+
+  it('stays silent rather than guessing when no candidate directory exists', async () => {
+    writeTranscript('conv-gone', conversation('ship it'), 'Users-nobody-vanished-project');
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.workingDirectory).toBe('Unknown');
+  });
+});
+
+/**
+ * Cursor stamps every user prompt with a human-readable `<timestamp>`. It is the only timing
+ * signal for a conversation the tracking database never recorded an edit for, and it beats the
+ * transcript file's birth/modification times badly: file times measure when the file was
+ * touched, so a session resumed days later reports a span of days rather than of minutes.
+ */
+describe('loadNativeSessions — Cursor activity window from transcript timestamps', () => {
+  /** A user line stamped the way Cursor writes it. */
+  function stampedUserLine(stamp: string, text: string): unknown {
+    return {
+      role: 'user',
+      message: {
+        content: [{ type: 'text', text: `<timestamp>${stamp}</timestamp><user_query>${text}</user_query>` }],
+      },
+    };
+  }
+
+  it('takes the window from the first and last stamped prompt', async () => {
+    writeTranscript('conv-stamped', [
+      stampedUserLine('Monday, Aug 31, 2026, 5:46 PM (UTC+3)', 'first'),
+      assistantLine('on it'),
+      stampedUserLine('Monday, Aug 31, 2026, 6:31 PM (UTC+3)', 'second'),
+      assistantLine('done'),
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.startEvent!.data.startTime).toBe(Date.parse('2026-08-31T17:46:00+03:00'));
+    expect(row.endEvent!.data.endTime).toBe(Date.parse('2026-08-31T18:31:00+03:00'));
+  });
+
+  it.skipIf(!hasNodeSqlite())('still prefers the tracking database when it recorded edits', async () => {
+    writeTranscript('conv-both', [
+      stampedUserLine('Monday, Aug 31, 2026, 5:46 PM (UTC+3)', 'first'),
+      assistantLine('done'),
+    ]);
+    await writeTrackingDb([
+      {
+        conversationId: 'conv-both',
+        fileName: join(projectDir, 'src', 'app.ts'),
+        model: 'claude-4.5-sonnet',
+        timestamp: FIRST_EDIT_MS,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.startTime).toBe(FIRST_EDIT_MS);
+  });
+
+  it('falls back to file times when no prompt is stamped', async () => {
+    writeTranscript('conv-unstamped', [
+      { role: 'user', message: { content: [{ type: 'text', text: '<user_query>no stamp here</user_query>' }] } },
+      assistantLine('done'),
+    ]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].startEvent!.data.startTime).toBeGreaterThan(0);
   });
 });

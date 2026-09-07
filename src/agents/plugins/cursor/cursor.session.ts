@@ -8,11 +8,13 @@
  * discovery keys on the presence of `agent-transcripts` rather than on the directory name.
  *
  * What a transcript can and cannot tell us is the whole design constraint here. It carries
- * role-tagged text, tool_use blocks and turn markers — and nothing else. No timestamps, no
- * model, no token counts. So:
+ * role-tagged text, tool_use blocks, turn markers, and a human-readable stamp on each prompt —
+ * but no model and no token counts. So:
  *
  * - the activity window comes from Cursor's own first/last recorded edit, falling back to the
- *   transcript file's birthtime/mtime, which is when Cursor created and last appended to it;
+ *   prompt stamps, and only then to the transcript file's birthtime/mtime — file times measure
+ *   when the file was touched, so a conversation resumed days later would otherwise report a
+ *   span of days rather than of minutes;
  * - messages are emitted deliberately WITHOUT timestamps, so the native loader falls back to
  *   the descriptor's window instead of a fabricated per-message clock;
  * - `usageMeta.usageUnavailableReason` is always set, which is what makes the report render
@@ -51,10 +53,12 @@ import { CURSOR_AGENT_NAME } from './cursor.constants.js';
 import { getCursorProjectsRoot } from './cursor.paths.js';
 import type { CursorConversationActivity, CursorTrackingIndex } from './cursor.tracking-db.js';
 import { readCursorTrackingIndex } from './cursor.tracking-db.js';
+import type { CursorMessageLine, CursorTranscriptLine } from './cursor.transcript.js';
 import {
   contentBlocks,
   isMessageLine,
   readCursorTranscript,
+  transcriptStampWindow,
   userQueryText,
 } from './cursor.transcript.js';
 import { logger } from '../../../utils/logger.js';
@@ -86,15 +90,56 @@ function sameDir(a: string | undefined, b: string): boolean {
 /**
  * Best-effort project path for a Cursor project slug.
  *
- * The slug is lossy: Cursor replaces both `/` and `_` with `-`, so `/Users/x/Sites/foo_bar`
- * and `/Users/x/Sites/foo-bar` produce the same slug and reversal cannot be trusted. Rather
- * than report a path that may not be the user's, the naive de-slug is only accepted when it
- * names a directory that actually exists; otherwise the session is reported without a project
- * and the report shows it as unknown. An honest gap beats a plausible-looking wrong answer.
+ * The slug is lossy in two directions at once: Cursor replaces `/` and `_` alike with `-`, and
+ * a directory name may contain `-` of its own. So a `-` in a slug can mean any of three things,
+ * and splitting on it cannot work — `Users-ada_lovelace-claude-code-router` would de-slug to
+ * `/Users/ada/lovelace/claude/code/router`, which is nobody's project. That naive reversal is
+ * why nearly every session used to report no project at all.
+ *
+ * Instead of guessing at the string, this walks the filesystem and lets it decide: from the
+ * root, only descend into a child whose own slug matches the next tokens of the slug being
+ * resolved. Each step is verified against a directory that exists, so the result is Cursor's
+ * own naming confirmed rather than a plausible-looking reconstruction — the same principle
+ * {@link projectPathFromFiles} already applies to the tracking database's file paths. When no
+ * branch consumes the whole slug the session stays silent about its project: an honest gap
+ * still beats a wrong answer.
  */
-function projectPathFromSlug(slug: string): string | undefined {
-  const candidate = sep + slug.split('-').join(sep);
-  return existsSync(candidate) ? candidate : undefined;
+function projectPathFromSlug(slug: string, cache?: Map<string, string | undefined>): string | undefined {
+  const cached = cache?.get(slug);
+  if (cached !== undefined || cache?.has(slug)) {
+    return cached;
+  }
+  const resolved = descendMatchingSlug(sep, slug.split('-'));
+  cache?.set(slug, resolved);
+  return resolved;
+}
+
+/**
+ * Deepest existing directory reached by consuming every token of a slug.
+ *
+ * A child matches when its own name, slugified, equals the tokens it would have to account
+ * for. Recursion (rather than a single greedy pass) is what makes `foo-bar/baz` and
+ * `foo/bar-baz` both reachable from `foo-bar-baz`; the first branch that consumes the slug
+ * whole wins, and there is only ever one such branch on a real filesystem.
+ */
+function descendMatchingSlug(dir: string, tokens: string[]): string | undefined {
+  if (tokens.length === 0) {
+    return dir;
+  }
+  for (const name of readDirNames(dir)) {
+    const nameTokens = slugForPath(name).split('-');
+    if (nameTokens.length > tokens.length) {
+      continue;
+    }
+    if (!nameTokens.every((token, i) => token === tokens[i])) {
+      continue;
+    }
+    const found = descendMatchingSlug(join(dir, name), tokens.slice(nameTokens.length));
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
 }
 
 /** The slug Cursor would have written for a directory: leading separator dropped, `/` and `_` → `-`. */
@@ -143,11 +188,17 @@ function projectPathFromFiles(slug: string, files: string[]): string | undefined
   }
 }
 
-/** Directory entries of `dir`, or an empty list when it cannot be read. */
+/**
+ * Subdirectory names of `dir`, or an empty list when it cannot be read.
+ *
+ * Symlinked directories count. On macOS `/var` — the ancestor of every temporary directory, and
+ * of plenty of real project trees — is a symlink, and `isDirectory()` is false for a symlink, so
+ * filtering on it alone would make the slug walk give up at the first step.
+ */
 function readDirNames(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) => entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(join(dir, entry.name))))
       .map((entry) => entry.name);
   } catch (error) {
     logger.debug(`[cursor-discovery] failed to read ${dir}:`, error);
@@ -155,13 +206,22 @@ function readDirNames(dir: string): string[] {
   }
 }
 
+/** Whether `path` is a directory, following symlinks. False when it cannot be stat'd. */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * When the transcript was created and last written.
+ * When the transcript file was created and last written.
  *
  * Some filesystems report a zero birthtime; mtime is then the only timestamp available and
  * collapses the window to a point, which is still truthful about "when this happened".
  */
-function transcriptWindow(filePath: string): { createdAt: number; updatedAt: number } | undefined {
+function fileWindow(filePath: string): { createdAt: number; updatedAt: number } | undefined {
   try {
     const stats = statSync(filePath);
     const updatedAt = stats.mtimeMs;
@@ -171,6 +231,36 @@ function transcriptWindow(filePath: string): { createdAt: number; updatedAt: num
     logger.debug(`[cursor-discovery] cannot stat transcript ${filePath}:`, error);
     return undefined;
   }
+}
+
+/**
+ * When a conversation ran, best source first.
+ *
+ * Cursor's own recorded edits are the strongest signal but exist only for conversations that
+ * changed a file. The prompt stamps in the transcript cover the rest and still describe the
+ * work rather than the file, so they come before the file's own times — those measure when the
+ * transcript was touched and stretch a resumed conversation across the whole gap.
+ */
+function activityWindow(
+  filePath: string,
+  activity: CursorConversationActivity | undefined
+): { createdAt: number; updatedAt: number } | undefined {
+  const stamps = activity?.firstEditMs === undefined ? transcriptStampWindow(filePath) : undefined;
+  const createdAt = activity?.firstEditMs ?? stamps?.firstMs;
+  const updatedAt = activity?.lastEditMs ?? stamps?.lastMs;
+
+  if (createdAt === undefined || updatedAt === undefined) {
+    const file = fileWindow(filePath);
+    if (!file) {
+      return undefined;
+    }
+    return {
+      createdAt: createdAt ?? file.createdAt,
+      updatedAt: Math.max(createdAt ?? file.createdAt, updatedAt ?? file.updatedAt),
+    };
+  }
+
+  return { createdAt, updatedAt: Math.max(createdAt, updatedAt) };
 }
 
 /** The Claude-shaped message the native loader's default synthesis branch understands. */
@@ -204,6 +294,69 @@ function applyModels(messages: CursorNativeMessage[], models: string[]): void {
   models.slice(0, assistant.length).forEach((model, i) => {
     assistant[i].message.model = model;
   });
+}
+
+/** What one transcript's lines amount to, once the shape Cursor writes is set aside. */
+interface FlattenedTranscript {
+  messages: CursorNativeMessage[];
+  userPrompts: Array<{ count: number; text: string }>;
+  tools: Record<string, number>;
+}
+
+/** The text of one line's content blocks, counting any tool_use it names along the way. */
+function textOfLine(line: CursorMessageLine, tools: Record<string, number>): string {
+  const texts: string[] = [];
+  for (const block of contentBlocks(line)) {
+    if (block.type === 'tool_use') {
+      const name = (block as { name?: string }).name;
+      if (name) {
+        tools[name] = (tools[name] ?? 0) + 1;
+      }
+      continue;
+    }
+    const text = (block as { text?: string }).text;
+    if (typeof text === 'string' && text.trim()) {
+      texts.push(text);
+    }
+  }
+  return texts.join('\n');
+}
+
+/**
+ * Transcript lines as the message stream the native loader understands.
+ *
+ * Turn markers are skipped: they carry no fact the message stream does not already imply, since
+ * the loader derives the turn count from assistant messages.
+ */
+function flattenTranscript(lines: CursorTranscriptLine[]): FlattenedTranscript {
+  const messages: CursorNativeMessage[] = [];
+  const userPrompts: Array<{ count: number; text: string }> = [];
+  const tools: Record<string, number> = {};
+
+  for (const line of lines) {
+    if (!isMessageLine(line)) {
+      continue;
+    }
+    const role = line.role === 'assistant' ? 'assistant' : line.role === 'user' ? 'user' : undefined;
+    if (!role) {
+      continue;
+    }
+
+    const joined = textOfLine(line, tools);
+    // Cursor wraps a prompt in <timestamp>/<user_query>; unwrap it so the report's session
+    // title reads as the user's question rather than as a date.
+    const content = role === 'user' ? (userQueryText(joined) ?? joined) : joined;
+    if (!content.trim()) {
+      continue;
+    }
+
+    messages.push({ type: role, message: { role, content } });
+    if (role === 'user') {
+      userPrompts.push({ count: 1, text: content });
+    }
+  }
+
+  return { messages, userPrompts, tools };
 }
 
 /**
@@ -297,6 +450,9 @@ export class CursorSessionAdapter implements SessionAdapter {
     const tracking = await this.trackingIndex();
 
     const results: SessionDescriptor[] = [];
+    // Resolving a slug walks the filesystem, and every conversation in a project repeats the
+    // same slug, so the answer is worked out once per project per run.
+    const slugPaths = new Map<string, string | undefined>();
 
     for (const slug of readDirNames(root)) {
       const transcriptsRoot = join(root, slug, TRANSCRIPTS_DIR);
@@ -304,40 +460,15 @@ export class CursorSessionAdapter implements SessionAdapter {
         continue;
       }
 
-      const slugPath = projectPathFromSlug(slug);
-
       for (const conversationId of readDirNames(transcriptsRoot)) {
-        const filePath = join(transcriptsRoot, conversationId, `${conversationId}.jsonl`);
-        if (!existsSync(filePath)) {
+        const descriptor = this.describeConversation(transcriptsRoot, conversationId, slug, tracking, slugPaths);
+        if (!descriptor || descriptor.createdAt < cutoffMs) {
           continue;
         }
-
-        const window = transcriptWindow(filePath);
-        if (!window) {
+        if (options?.cwd && !sameDir(descriptor.projectPath, options.cwd)) {
           continue;
         }
-
-        // A conversation that exists only in the database has no transcript and never reaches
-        // this point — the file loop above is the sole source of session identity.
-        const activity = tracking.get(conversationId);
-        const projectPath = projectPathFromFiles(slug, activity?.files ?? []) ?? slugPath;
-        if (options?.cwd && !sameDir(projectPath, options.cwd)) {
-          continue;
-        }
-
-        const createdAt = activity?.firstEditMs ?? window.createdAt;
-        if (createdAt < cutoffMs) {
-          continue;
-        }
-
-        results.push({
-          sessionId: conversationId,
-          filePath,
-          projectPath,
-          createdAt,
-          updatedAt: Math.max(createdAt, activity?.lastEditMs ?? window.updatedAt),
-          agentName: this.agentName,
-        });
+        results.push(descriptor);
       }
     }
 
@@ -353,6 +484,44 @@ export class CursorSessionAdapter implements SessionAdapter {
   }
 
   /**
+   * One conversation as a descriptor, or undefined when it has no transcript on disk.
+   *
+   * The descriptor — not the parsed session — is where the project and the window have to land:
+   * Cursor's messages carry no timestamps and no cwd, so the native loader's default synthesis
+   * reads exactly those facts off the descriptor.
+   */
+  private describeConversation(
+    transcriptsRoot: string,
+    conversationId: string,
+    slug: string,
+    tracking: CursorTrackingIndex,
+    slugPaths: Map<string, string | undefined>
+  ): SessionDescriptor | undefined {
+    const filePath = join(transcriptsRoot, conversationId, `${conversationId}.jsonl`);
+    if (!existsSync(filePath)) {
+      return undefined;
+    }
+
+    // A conversation that exists only in the database has no transcript and never reaches this
+    // point — the transcript file is the sole source of session identity.
+    const activity = tracking.get(conversationId);
+    const window = activityWindow(filePath, activity);
+    if (!window) {
+      return undefined;
+    }
+
+    return {
+      sessionId: conversationId,
+      filePath,
+      projectPath:
+        projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug, slugPaths),
+      createdAt: window.createdAt,
+      updatedAt: window.updatedAt,
+      agentName: this.agentName,
+    };
+  }
+
+  /**
    * Parse one conversation transcript.
    *
    * The conversation id is the file's own basename, which is also the key the AI-tracking
@@ -363,55 +532,11 @@ export class CursorSessionAdapter implements SessionAdapter {
     const lines = readCursorTranscript(filePath);
     const activity = (await this.trackingIndex()).get(conversationId);
 
-    const messages: CursorNativeMessage[] = [];
-    const userPrompts: Array<{ count: number; text: string }> = [];
-    const tools: Record<string, number> = {};
-
-    for (const line of lines) {
-      if (!isMessageLine(line)) {
-        // Turn markers carry no facts the message stream does not already imply — the loader
-        // derives the turn count from assistant messages.
-        continue;
-      }
-      const role = line.role === 'assistant' ? 'assistant' : line.role === 'user' ? 'user' : undefined;
-      if (!role) {
-        continue;
-      }
-
-      const texts: string[] = [];
-      for (const block of contentBlocks(line)) {
-        if (block.type === 'tool_use') {
-          const name = (block as { name?: string }).name;
-          if (name) {
-            tools[name] = (tools[name] ?? 0) + 1;
-          }
-          continue;
-        }
-        const text = (block as { text?: string }).text;
-        if (typeof text === 'string' && text.trim()) {
-          texts.push(text);
-        }
-      }
-
-      const joined = texts.join('\n');
-      // Cursor wraps a prompt in <timestamp>/<user_query>; unwrap it so the report's session
-      // title reads as the user's question rather than as a date.
-      const content = role === 'user' ? (userQueryText(joined) ?? joined) : joined;
-      if (!content.trim()) {
-        continue;
-      }
-
-      messages.push({ type: role, message: { role, content } });
-      if (role === 'user') {
-        userPrompts.push({ count: 1, text: content });
-      }
-    }
+    const { messages, userPrompts, tools } = flattenTranscript(lines);
 
     applyModels(messages, activity?.models ?? []);
 
-    const window = transcriptWindow(filePath);
-    const startMs = activity?.firstEditMs ?? window?.createdAt;
-    const endMs = activity?.lastEditMs ?? window?.updatedAt;
+    const window = activityWindow(filePath, activity);
     const slug = slugOfTranscript(filePath);
     const projectPath = projectPathFromFiles(slug, activity?.files ?? []) ?? projectPathFromSlug(slug);
 
@@ -424,8 +549,8 @@ export class CursorSessionAdapter implements SessionAdapter {
       agentName: this.metadata.displayName,
       metadata: {
         projectPath,
-        createdAt: startMs === undefined ? undefined : new Date(startMs).toISOString(),
-        updatedAt: endMs === undefined ? undefined : new Date(endMs).toISOString(),
+        createdAt: window === undefined ? undefined : new Date(window.createdAt).toISOString(),
+        updatedAt: window === undefined ? undefined : new Date(window.updatedAt).toISOString(),
       },
       // No per-message timestamps exist, and inventing them would make the report show a
       // duration Cursor never recorded. Leaving them out makes the loader fall back to the

@@ -711,7 +711,7 @@
         return ['<span title="' + esc(sessTitle(s)) + '">' + esc(truncStr(sessTitle(s), 44)) + '</span>',
           '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
-          fmtTokens(Math.round(x.ctx)), fmtTokens(s.tokens ? s.tokens.cacheRead : 0), fmtUSD(s.costUSD), (Math.round(x.bloat * 10) / 10) + '%'];
+          fmtTokensOf(s, Math.round(x.ctx)), fmtTokensOf(s, s.tokens ? s.tokens.cacheRead : 0), fmtUSDOf(s, s.costUSD), (Math.round(x.bloat * 10) / 10) + '%'];
       }),
       [false, false, false, true, true, true, true],
       bloated.map(function (x) { return 'class="clickable" data-session="' + esc(x.s.sessionId) + '"'; })) + '</div>';
@@ -728,8 +728,8 @@
     var deadCard = card('Dead sessions', 'cost spent, zero files changed and zero net lines — pure inference waste');
     var dkv = el('div', 'kpi-grid'); dkv.style.gridTemplateColumns = 'repeat(3,1fr)';
     [['Dead sessions', fmtNum(dead.length), fs.length ? (Math.round((dead.length / fs.length) * 100) + '% of sessions') : ''],
-     ['Wasted cost', fmtUSD(deadCost), totalCost ? (Math.round((deadCost / totalCost) * 100) + '% of spend') : ''],
-     ['Avg cost / dead', dead.length ? fmtUSD(deadCost / dead.length) : '—', 'per unproductive session']
+     ['Wasted cost', fmtUSDAgg(dead, deadCost), totalCost ? (Math.round((deadCost / totalCost) * 100) + '% of spend') : ''],
+     ['Avg cost / dead', dead.length ? fmtUSDAgg(dead, deadCost / dead.length) : '—', 'per unproductive session']
     ].forEach(function (k) {
       var c = el('div', 'kpi'); c.appendChild(el('div', 'kpi-label', k[0])); c.appendChild(el('div', 'kpi-value', k[1])); if (k[2]) c.appendChild(el('div', 'kpi-sub', k[2])); dkv.appendChild(c);
     });
@@ -826,7 +826,7 @@
 
     var grid = el('div', 'kpi-grid'); grid.style.gridTemplateColumns = 'repeat(3,1fr)';
     var tok = fs.reduce(function (acc, s) { return acc + (s.tokens ? s.tokens.total : 0); }, 0);
-    [['Total est. cost', fmtUSD(total)], ['Total tokens', fmtTokens(tok)], ['Avg cost / session', fs.length ? fmtUSD(total / fs.length) : '—']].forEach(function (k) {
+    [['Total est. cost', fmtUSDAgg(fs, total)], ['Total tokens', anyMeasured(fs) ? fmtTokens(tok) : '—'], ['Avg cost / session', fs.length ? fmtUSDAgg(fs, total / fs.length) : '—']].forEach(function (k) {
       var c = el('div', 'kpi'); c.appendChild(el('div', 'kpi-label', k[0])); c.appendChild(el('div', 'kpi-value', k[1])); grid.appendChild(c);
     });
     host.appendChild(grid);
@@ -1107,7 +1107,7 @@
     // Session bar spans the full window (the activity envelope). Its label shows the envelope
     // span — equal to the tracked duration in the normal case, but revealing the true span when
     // the tracked duration under-counts (e.g. dispatches predating a post-compaction window).
-    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(ganttSpan), fmtUSD(s.costUSD), true));
+    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(ganttSpan), fmtUSDOf(s, s.costUSD), true));
 
     var occ = {};
     dispatches.forEach(function (d) {
@@ -1253,7 +1253,7 @@
     // which bills in premium requests rather than tokens, and whose older CLI versions
     // recorded no telemetry at all). Appended so other agents' cards are unchanged.
     var costRows = [
-      ['Cost', s.usageUnavailableReason ? '—' : fmtUSD(s.costUSD), s.usageUnavailableReason ? 'not measurable' : 'API-equivalent'],
+      ['Cost', fmtUSDOf(s, s.costUSD), usageUnknown(s) ? 'not measurable' : 'API-equivalent'],
       ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
       ['Duration', fmtDuration(s.durationMs || 0), ''],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
