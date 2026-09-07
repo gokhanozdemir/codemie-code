@@ -52,8 +52,8 @@ transcript ids, so a conversation with a header but no transcript (the common ca
 transcript with no header (rare — schema drift, a pruned header row) both produce a session row.
 Headers marked `isDraft: true` are conversations that were never started and are excluded.
 
-Full rationale for reading an undocumented store, and the constraints that come with it, is in
-[ADR 0001](adr/0001-cursor-session-discovery-from-state-vscdb.md).
+`state.vscdb` is undocumented and can change in any Cursor release; reads are read-only and
+fail-soft so a missing, locked, or drifted store never fails analytics for other agents.
 
 ### What Cursor sessions can and cannot report
 
@@ -293,6 +293,5 @@ degradation test proving analytics still works when that source is gone.
 
 ## See also
 
-- [ADR 0001 — Cursor session discovery from `state.vscdb`](adr/0001-cursor-session-discovery-from-state-vscdb.md)
 - [Analytics Report](ANALYTICS-REPORT.md) — provenance, `--include-external`, the report views
 - [`.ai-run/guides/integration/external-integrations.md`](../.ai-run/guides/integration/external-integrations.md) — including the deferred Cursor Enterprise Team Analytics API

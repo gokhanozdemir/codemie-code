@@ -79,7 +79,7 @@ function hostOf(url: string): string {
 /**
  * Read the signed-in session cookie out of Cursor's own state database.
  *
- * Read-only and fail-soft by mandate (ADR 0001): an absent file, an old Node, a renamed table,
+ * Read-only and fail-soft: an absent file, an old Node, a renamed table,
  * a corrupt or locked database, or simply not being signed in all return `undefined` rather
  * than throwing. Candidate rows are matched on {@link COOKIE_SHAPE}, so a storage-key rename
  * does not break this and no unrelated secret is mistaken for the cookie.

@@ -7,8 +7,7 @@
  *
  * `state.vscdb` is a second, unrelated Cursor data location: it is the VS Code/Cursor
  * *application* state store, not `~/.cursor` (which holds Cursor's own project/tracking
- * data), so it lives under the OS's per-app-data directory (see ADR
- * `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`). `CURSOR_HOME` still doubles
+ * data), so it lives under the OS's per-app-data directory. `CURSOR_HOME` still doubles
  * as the test-fixture override for it — same rationale as above — under a `User/globalStorage`
  * layout that mirrors where Cursor actually keeps it relative to its app-data root.
  */
