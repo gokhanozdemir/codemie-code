@@ -22,8 +22,9 @@
  */
 
 import { existsSync } from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
+import { asBoolean, asEpochMs, asNumber, asString, loadSqlite } from './cursor.sqlite.js';
 
 /** What `composerHeaders` knows about one Cursor Agent conversation. */
 export interface CursorComposerHeader {
@@ -62,23 +63,6 @@ interface ComposerRow {
   totalLinesRemoved?: unknown;
   filesChangedCount?: unknown;
   isDraft?: unknown;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function asEpochMs(value: unknown): number | undefined {
-  const num = asNumber(value);
-  return num !== undefined && num > 0 ? num : undefined;
-}
-
-function asBoolean(value: unknown): boolean {
-  return value === true || value === 1 || value === 'true' || value === '1';
 }
 
 /**
@@ -148,17 +132,7 @@ function composerIdFromKey(key: unknown): string | undefined {
   return asString(segments[segments.length - 1]);
 }
 
-function normalizeHeader(source: {
-  composerId?: unknown;
-  workspaceIdentifier?: unknown;
-  activeBranch?: unknown;
-  createdOnBranch?: unknown;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-  totalLinesAdded?: unknown;
-  totalLinesRemoved?: unknown;
-  filesChangedCount?: unknown;
-}): Omit<CursorComposerHeader, 'composerId'> {
+function normalizeHeader(source: ComposerRow): Omit<CursorComposerHeader, 'composerId'> {
   return {
     projectPath: extractProjectPath(source.workspaceIdentifier),
     branch: extractBranch(source),
@@ -168,23 +142,6 @@ function normalizeHeader(source: {
     linesRemoved: asNumber(source.totalLinesRemoved),
     filesChangedCount: asNumber(source.filesChangedCount),
   };
-}
-
-/**
- * `node:sqlite`, or null where it does not exist.
- *
- * The repository supports Node >= 20 and `node:sqlite` only landed in 22.5, so this cannot be a
- * static import: on Node 20 it would throw at module load and take the whole analytics run
- * down. Cursor session discovery from `state.vscdb` is optional — older runtimes simply see no
- * Cursor sessions from this source.
- */
-async function loadSqlite(): Promise<typeof import('node:sqlite') | null> {
-  try {
-    return await import('node:sqlite');
-  } catch (error) {
-    logger.debug('[cursor] node:sqlite unavailable — skipping composer index:', error);
-    return null;
-  }
 }
 
 /**
@@ -202,7 +159,7 @@ export async function readCursorComposerIndex(
     return index;
   }
 
-  const sqlite = await loadSqlite();
+  const sqlite = await loadSqlite('composer index');
   if (!sqlite) {
     return index;
   }

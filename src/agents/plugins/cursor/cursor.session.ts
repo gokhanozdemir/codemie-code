@@ -82,7 +82,7 @@ import {
   transcriptStampWindow,
   userQueryText,
 } from './cursor.transcript.js';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

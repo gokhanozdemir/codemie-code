@@ -16,9 +16,10 @@
  */
 
 import { existsSync } from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 import { CURSOR_AUTO_MODEL_LABEL, CURSOR_AUTO_MODEL_SENTINEL } from './cursor.constants.js';
 import { getCursorTrackingDbPath } from './cursor.paths.js';
+import { asEpochMs, asString, loadSqlite } from './cursor.sqlite.js';
 
 /** What the tracking database knows about one conversation. */
 export interface CursorConversationActivity {
@@ -67,31 +68,6 @@ interface ActivityRow {
   lastMs?: unknown;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function asEpochMs(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-/**
- * `node:sqlite`, or null where it does not exist.
- *
- * The repository supports Node >= 20 and `node:sqlite` only landed in 22.5, so this cannot
- * be a static import: on Node 20 it would throw at module load and take the whole analytics
- * run down. Cursor enrichment is optional, so an older runtime simply gets transcript-only
- * rows.
- */
-async function loadSqlite(): Promise<typeof import('node:sqlite') | null> {
-  try {
-    return await import('node:sqlite');
-  } catch (error) {
-    logger.debug('[cursor] node:sqlite unavailable — skipping tracking enrichment:', error);
-    return null;
-  }
-}
-
 /**
  * Build the conversation → activity index, or an empty map when the database cannot be read.
  *
@@ -107,7 +83,7 @@ export async function readCursorTrackingIndex(
     return index;
   }
 
-  const sqlite = await loadSqlite();
+  const sqlite = await loadSqlite('tracking enrichment');
   if (!sqlite) {
     return index;
   }

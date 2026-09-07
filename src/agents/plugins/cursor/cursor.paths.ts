@@ -15,7 +15,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { resolveHomeDir } from '../../../utils/paths.js';
+import { resolveHomeDir } from '@/utils/paths.js';
 
 /** `~/.cursor`, or `$CURSOR_HOME` when set. */
 export function getCursorHome(): string {
