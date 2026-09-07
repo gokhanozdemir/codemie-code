@@ -321,12 +321,14 @@ the session `usagePartial`.
 Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
 undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
 
-### Cursor Enterprise Team Analytics API (not integrated)
+### Cursor Enterprise Team Analytics API (opt-in)
 
 Cursor publishes an official Team Analytics API
-(<https://cursor.com/docs/account/teams/analytics-api>). **CodeMie does not integrate it today.**
-It is recorded here as a known, deferred capability so the constraints below are not re-derived —
-or, worse, so nothing is wired up that silently makes network calls.
+(<https://cursor.com/docs/account/teams/analytics-api>). CodeMie integrates it as a strictly
+opt-in, user-scoped extra: `src/agents/plugins/cursor/cursor.team-analytics.ts`, surfaced by
+`codemie analytics --report --cursor-team-analytics` with `CURSOR_TEAM_ANALYTICS_API_KEY` set.
+**Both** are required — a configured credential alone never triggers a call — and this is the only
+network call anywhere in the analytics path. It still **cannot** supply tokens or cost.
 
 What the API is:
 
@@ -335,7 +337,17 @@ What the API is:
 - Documented endpoints: `agent-edits`, `tabs`, `dau`, `models`, `commands`,
   `conversation-insights`, `leaderboard`, `bugbot`.
 - **None of these endpoints returns token or cost fields at any tier.** The API cannot fill
-  CodeMie's biggest Cursor gap.
+  CodeMie's biggest Cursor gap. Re-verified against the live docs on 2026-09-05: responses carry
+  `total_suggested_diffs`, `total_accepted_diffs`, `total_rejected_diffs`,
+  `total_green_lines_accepted`, `total_red_lines_accepted`, `total_suggestions`, `total_accepts`,
+  `total_rejects`, `messages`, `command_name`, `skill_name`, `model` — and nothing token-shaped.
+
+How the shipped integration honours the constraints below: it queries only `by-user` endpoints
+(`agent-edits`, `tabs`, `models`, `commands`) with `users=<the report owner's own email>`, never a
+`team/*` endpoint and never the leaderboard; it renders into its own "Cursor Team API" report view
+that is hidden unless a pull happened; it synthesizes no token or cost field; and every failure
+mode — missing key, HTTP error, DNS failure, schema drift — degrades to an omitted or partial
+section rather than breaking the local report.
 
 Agreed constraints for any future integration:
 
