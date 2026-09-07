@@ -901,6 +901,12 @@
       + 'records transcripts locally but no token telemetry at all (analytics-only agents such as Cursor). '
       + 'This does not affect the cost of the sessions that are priced. See Coverage by agent below.';
     if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Models with no published price (estimated at a stand-in rate when tokens were recovered): ' + DATA.meta.unpricedModels.join(', ') + '.';
+    // Rows imported from a Cursor usage export are the vendor's own billed figures, not a figure
+    // CodeMie derived from tokens and a pricing table. Folding them in without saying so would
+    // lose the one distinction the import exists to make. Read off the filtered sessions, so it
+    // is stated exactly when such a row is actually on screen.
+    var vendorBilled = fs.some(function (s) { return (s.perModelCost || []).some(function (m) { return m.costBasis === 'vendor-billed'; }); });
+    if (vendorBilled) msg += ' Cursor figures here are Cursor\u2019s own billing, imported from your usage export \u2014 not a CodeMie estimate; every other cost on this page is computed from tokens and a pricing table.';
     banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
 
