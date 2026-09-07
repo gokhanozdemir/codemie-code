@@ -257,6 +257,13 @@ export interface AnalyticsOptions {
    * and neither does the credential alone.
    */
   cursorTeamAnalytics?: boolean;
+  /** Path to a Cursor usage-events CSV exported from the Cursor dashboard (no network call). */
+  cursorUsageCsv?: string;
+  /**
+   * Which `User` column value to keep from that CSV. Defaults to the report owner's configured
+   * email, which is often a different address from the one on the Cursor account.
+   */
+  cursorUsageUser?: string;
 }
 
 /** Options for the `analytics otel` subcommand: the shared base plus OTEL-specific flags. */
