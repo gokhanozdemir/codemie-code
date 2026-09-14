@@ -1,7 +1,7 @@
 /**
  * Shared read-only helpers for the Cursor plugin's SQLite readers.
  *
- * Every reader here follows the same fail-soft contract (ADR 0001): an absent database, an old
+ * Every reader here follows the same fail-soft contract: an absent database, an old
  * Node without `node:sqlite`, a renamed table/column, or a corrupt/locked file degrades to
  * "no enrichment" rather than throwing. These helpers hold the parts that were otherwise
  * copy-pasted across `cursor.tracking-db.ts`, `cursor.state-db.ts`, `cursor.bubbles.ts`, and

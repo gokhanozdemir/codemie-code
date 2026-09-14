@@ -2,8 +2,8 @@
  * Per-turn enrichment from Cursor's internal `state.vscdb` — the `cursorDiskKV` table.
  *
  * `cursorDiskKV` is VS Code/Cursor's own undocumented internal key/value store, not a stable
- * public API (see `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`). It holds one
- * row per bubble (turn/message) keyed `bubbleId:<composerId>:<bubbleId>`, interleaved with
+ * public API. It holds one row per bubble (turn/message) keyed `bubbleId:<composerId>:<bubbleId>`,
+ * interleaved with
  * unrelated `composerData:*` keys and, in aggregate, up to ~1.4GB of unrelated VS Code state —
  * so every read here filters by `composerId` in SQL rather than scanning the whole table.
  *

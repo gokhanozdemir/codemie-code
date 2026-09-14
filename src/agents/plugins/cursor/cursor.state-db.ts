@@ -2,8 +2,8 @@
  * Session discovery from Cursor's internal `state.vscdb` — the `composerHeaders` table.
  *
  * `state.vscdb` is VS Code/Cursor's own undocumented internal state store, not a stable public
- * API (see `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`). `composerHeaders`
- * holds one row per Cursor Agent conversation, keyed by `composerId` — the same identifier used
+ * API. `composerHeaders` holds one row per Cursor Agent conversation, keyed by `composerId` — the
+ * same identifier used
  * as the `agent-transcripts` directory name and `ai_code_hashes.conversationId` elsewhere in
  * this plugin. Its row shape is unconfirmed: it may be flat columns, or (as is common for
  * VS Code/Cursor internal tables) a `key TEXT, value TEXT` pair with `value` holding a JSON

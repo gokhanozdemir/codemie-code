@@ -130,7 +130,7 @@ function tokensByModelUsage(tokensByModel: Record<string, { inputTokens: number;
 
 /**
  * Rate stand-in for a model that recovered real tokens but matches no pricing entry — Cursor
- * delegates model choice and records `default` (displayed as Auto per ADR 0001), and other
+ * delegates model choice and records `default` (displayed as Auto), and other
  * agents occasionally report ids the table has not caught up with. Claude Sonnet is the
  * published mid-tier API rate, so it is the defensible order-of-magnitude estimate; a blank
  * cell would be less honest than a labelled floor when the token counts themselves are real.

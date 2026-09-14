@@ -327,61 +327,9 @@ tool-call counts. When tokens *are* recovered under an unpriceable model (`defau
 enricher estimates at a published Claude Sonnet rate, preserves the original model label, and marks
 the session `usagePartial`.
 
-Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
-undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
-
-### Cursor Enterprise Team Analytics API (not integrated)
-
-Cursor publishes an official Team Analytics API
-(<https://cursor.com/docs/account/teams/analytics-api>). CodeMie integrates it as a strictly
-**CodeMie does not integrate it.** A complete, reviewed implementation exists on the
-`feature/cursor-team-analytics-untested` branch and was deliberately kept off the shipping branch:
-no one on the team has an enterprise-admin account, so the success path was never exercised
-against the live API (every probe returned `401 Invalid Team API Key`). Shipping untestable code
-that makes network calls is the risk being avoided — not a judgement that the code is wrong.
-
-Two facts make this an easy trade. The API **cannot** supply tokens or cost at any tier, so it
-never answered the question people actually have about Cursor; and its key is not obtainable by an
-ordinary team member. The path that does work, for everyone, is the dashboard usage export via
-`--cursor-usage-csv`.
-
-If it is ever revived, the constraints below still hold, and the branch already implements them.
-
-What the API is:
-
-- **Enterprise-team-only** and gated on an **admin-scoped API key**. An individual user on a
-  personal plan cannot use it at all.
-- Documented endpoints: `agent-edits`, `tabs`, `dau`, `models`, `commands`,
-  `conversation-insights`, `leaderboard`, `bugbot`.
-- **None of these endpoints returns token or cost fields at any tier.** The API cannot fill
-  CodeMie's biggest Cursor gap. Re-verified against the live docs on 2026-09-05: responses carry
-  `total_suggested_diffs`, `total_accepted_diffs`, `total_rejected_diffs`,
-  `total_green_lines_accepted`, `total_red_lines_accepted`, `total_suggestions`, `total_accepts`,
-  `total_rejects`, `messages`, `command_name`, `skill_name`, `model` — and nothing token-shaped.
-
-How the shipped integration honours the constraints below: it queries only `by-user` endpoints
-(`agent-edits`, `tabs`, `models`, `commands`) with `users=<the report owner's own email>`, never a
-`team/*` endpoint and never the leaderboard; it renders into its own "Cursor Team API" report view
-that is hidden unless a pull happened; it synthesizes no token or cost field; and every failure
-mode — missing key, HTTP error, DNS failure, schema drift — degrades to an omitted or partial
-section rather than breaking the local report.
-
-Agreed constraints for any future integration:
-
-- **Trigger model.** A configured token alone must never enable network calls. Both the token
-  *and* an explicit opt-in flag at invocation are required, mirroring how `--include-external`
-  gates external sessions. Reading local files is a promise CodeMie already makes; calling a
-  remote service is not, and must stay an explicit act.
-- **Data scope.** User-wide only: the `by-user` endpoints filtered to the requesting user's own
-  email. Not team-wide data, not the leaderboard. CodeMie analytics reports the operator's own
-  usage, and pulling colleagues' activity into it is out of scope.
-- **Unsolved reconciliation problem.** The API returns per-user/per-date aggregates with **no
-  join key to a local `composerId`-keyed session**. There is therefore no way to enrich
-  `ReportSessionRecord` rows with it. Any integration would have to render a **separate summary
-  section**, clearly labelled as team-API data, rather than merging into the session table —
-  attempting the merge would silently double-count or mis-attribute.
-
-Full context: ADR 0001, [`docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`](../../../docs/adr/0001-cursor-session-discovery-from-state-vscdb.md).
+Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. `state.vscdb` is
+undocumented VS Code/Cursor application state; `composerHeaders` is primary session discovery
+and all reads are fail-soft.
 
 ## Configuration Validation
 
@@ -418,7 +366,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 - OpenCode plugin: `src/agents/plugins/opencode/`
 - Codex plugin: `src/agents/plugins/codex/`
 - Claude plugin: `src/agents/plugins/claude/`
-- Cursor plugin: `src/agents/plugins/cursor/` (guide: `docs/CURSOR_INTEGRATION.md`, ADR: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`)
+- Cursor plugin: `src/agents/plugins/cursor/` (guide: `docs/CURSOR_INTEGRATION.md`)
 - MCP proxy: `src/mcp/`
 - Session adapters: `src/agents/core/session/`
 - Config loader: `src/env/config-loader.ts`

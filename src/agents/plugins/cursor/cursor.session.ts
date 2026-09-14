@@ -2,8 +2,8 @@
  * Cursor session adapter — analytics-only.
  *
  * Discovery is keyed on `composerId`, the identifier Cursor uses for one agent conversation
- * across every local store it writes: `state.vscdb`'s `composerHeaders` table (primary — see
- * `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`), the
+ * across every local store it writes: `state.vscdb`'s `composerHeaders` table (primary;
+ * undocumented VS Code/Cursor state, fail-soft), the
  * `~/.cursor/projects/<project-slug>/agent-transcripts/<composerId>/<composerId>.jsonl`
  * transcript (secondary, joined by the shared id), and `ai_code_hashes.conversationId` in the
  * AI-tracking database (enrichment, same join). A session can have a header with no transcript
@@ -93,7 +93,7 @@ const TRANSCRIPTS_DIR = 'agent-transcripts';
 /**
  * Why a Cursor session has no priced usage — used only when `cursorDiskKV` carried no token
  * signal for it at all (see {@link resolveUsageMeta}; most sessions, since the per-turn
- * `tokenCount` field is present on roughly 1% of bubbles per ADR 0001). Reporting zero cost
+ * `tokenCount` field is present on roughly 1% of bubbles). Reporting zero cost
  * would read as "this session was free"; the reason string makes the report say "unmeasurable"
  * instead.
  */
@@ -432,7 +432,7 @@ function aggregateLinesFileOp(
 /**
  * Usage provenance for a session, from its `cursorDiskKV` bubbles.
  *
- * Cursor's per-turn token counts are sparse (~1% of bubbles, per ADR 0001) and have no
+ * Cursor's per-turn token counts are sparse (~1% of bubbles) and have no
  * alignment to transcript messages, so there is nothing for a per-message reader to walk —
  * unlike a fabricated confident zero, `usagePartial: true` tells the report this total
  * understates the session's real usage. A session with no token signal anywhere keeps the
@@ -679,7 +679,7 @@ export class CursorSessionAdapter implements SessionAdapter {
    * `composerHeaders` table has a (non-draft) row for, and every composerId with a real
    * transcript under `~/.cursor/projects`. Most real sessions today have a header and no
    * transcript; a small, shrinking set has a transcript with no header (schema drift, a pruned
-   * row) and falls all the way back to the pre-ADR-0001 slug walk. Neither set alone is
+   * row) and falls all the way back to the slug-walk project-path guess. Neither set alone is
    * discovery — see the module doc comment.
    *
    * Discovery deliberately does not open transcripts: a transcript file's own stat, or the

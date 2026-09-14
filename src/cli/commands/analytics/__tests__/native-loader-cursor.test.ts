@@ -147,7 +147,7 @@ interface ComposerHeaderRow {
 
 /**
  * A fixture `state.vscdb` with Cursor's real `composerHeaders` key/value table shape — the
- * primary session-discovery source (see `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`).
+ * primary session-discovery source.
  * `CURSOR_HOME` relocates it to `<home>/User/globalStorage/state.vscdb`, mirroring
  * `getCursorStateDbPath()`.
  */
@@ -504,7 +504,7 @@ describe('loadNativeSessions — Cursor degrades to transcript-only rows', () =>
 
 /**
  * `composerHeaders` in `state.vscdb` is the primary session-discovery source (see the module
- * doc comment in `cursor.session.ts` and `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`);
+ * doc comment in `cursor.session.ts`);
  * a transcript is no longer required for a conversation to be discoverable, and when a header
  * exists it settles project path, branch and line counts outright instead of the transcript-only
  * fallbacks (slug walk, tracking-db files, prompt stamps) exercised elsewhere in this file.
@@ -735,7 +735,7 @@ describe('loadNativeSessions — Cursor reports no usage or line counts without 
 
 /**
  * `cursorDiskKV` bubble rows in the SAME `state.vscdb` file `composerHeaders` lives in (see
- * `cursor.bubbles.ts` and `docs/adr/`) are the source for real per-tool success/failure counts
+ * `cursor.bubbles.ts`) are the source for real per-tool success/failure counts
  * and, on the sparse fraction of bubbles that carry a nonzero `tokenCount`, partial token
  * pricing. Bubbles are keyed by composerId directly, so enrichment applies identically whether
  * or not a transcript exists on disk for the conversation.
