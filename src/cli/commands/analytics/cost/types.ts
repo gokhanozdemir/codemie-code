@@ -19,8 +19,14 @@ export interface TokenUsage {
 export interface ModelCost {
   model: string; // normalized model name
   tokens: TokenUsage;
-  costUSD: number; // 0 when unpriced
+  costUSD: number; // 0 when unpriced with no tokens to estimate from
   unpriced: boolean; // true when no pricing entry matched
+  /**
+   * True when `costUSD` came from the unpriced-model rate stand-in rather than this model's
+   * own rates — real tokens, borrowed prices. Always accompanies `unpriced`, and forces
+   * `SessionCost.usagePartial`, so the figure is never read as an invoice.
+   */
+  estimated?: boolean;
 }
 
 /** One cumulative point in a session's token & cost growth series. */
