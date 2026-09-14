@@ -25,13 +25,16 @@ import { logger } from '@/utils/logger.js';
 export interface CursorUsageEvent {
   /** ISO timestamp as written by the export. */
   date: string;
-  /** Local day key (YYYY-MM-DD) used for grouping. */
+  /**
+   * Local day key (YYYY-MM-DD). Derived in local time, not by slicing the UTC timestamp, so
+   * these buckets line up with every other day-grouped view in the report — an evening event
+   * must not land on tomorrow here and today everywhere else.
+   */
   day: string;
   user: string;
   /** Cursor's billing category — `Included`, `On-Demand`, … Recorded, never used to zero usage. */
   kind: string;
   model: string;
-  maxMode: boolean;
   tokens: CursorUsageTokens;
   /** USD from the `Cost` column; 0 when the export variant has no such column. */
   costUSD: number;
@@ -47,19 +50,15 @@ export interface CursorUsageTokens {
   total: number;
 }
 
-export interface CursorUsageGroup {
-  model: string;
+/** Rolled-up usage for one key (a model, a day, …). */
+export interface CursorUsageBucket {
   events: number;
   tokens: CursorUsageTokens;
   costUSD: number;
 }
 
-export interface CursorUsageDay {
-  day: string;
-  events: number;
-  tokens: CursorUsageTokens;
-  costUSD: number;
-}
+export type CursorUsageGroup = CursorUsageBucket & { model: string };
+export type CursorUsageDay = CursorUsageBucket & { day: string };
 
 export interface CursorUsageImport {
   events: CursorUsageEvent[];
@@ -145,12 +144,26 @@ function num(v: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Local YYYY-MM-DD for an export timestamp; empty when it is unparseable. */
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return iso.slice(0, 10);
+  }
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /**
- * Cost cells are mostly plain decimals but the export also writes words such as `Free`. Pull the
- * first number out and treat anything wordy as zero rather than NaN-poisoning the total.
+ * Cost cells are mostly plain decimals but the export also writes words such as `Free` (two of
+ * them in the verified 61-event export). Pull the first number out and treat anything wordy as
+ * zero rather than NaN-poisoning the total.
+ *
+ * Thousands separators are stripped FIRST: matching a number out of `1,234.50` without doing so
+ * yields `1`, which is far worse than a NaN because it is silently plausible.
  */
 function money(v: string | undefined): number {
-  const m = /-?\d+(?:\.\d+)?/.exec(String(v ?? ''));
+  const m = /-?\d+(?:\.\d+)?/.exec(String(v ?? '').replace(/,/g, ''));
   return m ? Number(m[0]) : 0;
 }
 
@@ -170,7 +183,11 @@ export function parseCursorUsageCsv(text: string, options: ParseOptions = {}): C
   };
 
   const hasCost = header.includes('Cost');
-  const wanted = options.userEmail?.trim().toLowerCase();
+  // Only filter when the export actually identifies users. A personal export can omit the column
+  // entirely, and filtering an absent column would drop every row of a perfectly valid file —
+  // there is no one else's data in it to exclude.
+  const hasUser = header.includes('User');
+  const wanted = hasUser ? options.userEmail?.trim().toLowerCase() : undefined;
   const usersInFile = new Set<string>();
   const events: CursorUsageEvent[] = [];
   let droppedByUserFilter = 0;
@@ -194,18 +211,17 @@ export function parseCursorUsageCsv(text: string, options: ParseOptions = {}): C
     };
     events.push({
       date,
-      day: date.slice(0, 10),
+      day: localDay(date),
       user,
       kind: (at(r, 'Kind') ?? '').trim(),
       model: (at(r, 'Model') ?? '').trim(),
-      maxMode: /^yes$/i.test((at(r, 'Max Mode') ?? '').trim()),
       tokens,
       costUSD: hasCost ? money(at(r, 'Cost')) : 0,
     });
   }
 
-  const group = <K extends string>(keyOf: (e: CursorUsageEvent) => K) => {
-    const m = new Map<K, { events: number; tokens: CursorUsageTokens; costUSD: number }>();
+  const group = <K extends string>(keyOf: (e: CursorUsageEvent) => K): Map<K, CursorUsageBucket> => {
+    const m = new Map<K, CursorUsageBucket>();
     for (const e of events) {
       const k = keyOf(e);
       const cur = m.get(k) ?? { events: 0, tokens: emptyTokens(), costUSD: 0 };

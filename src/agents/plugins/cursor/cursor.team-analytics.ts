@@ -17,9 +17,11 @@
  *    below are edit/activity aggregates only.
  *
  * The path that *does* yield real Cursor tokens and cost — for admins and members alike — is the
- * dashboard usage export, imported via `--cursor-usage-csv` (see `cursor.usage-csv.ts`). They are also per-user/per-date aggregates carrying no `composerId`, so
- * there is no key on which to join them to local sessions — hence the report renders them as a
- * clearly separate section rather than folding them into the session table.
+ * dashboard usage export, imported via `--cursor-usage-csv` (see `cursor.usage-csv.ts`).
+ *
+ * These rows are also per-user/per-date aggregates carrying no `composerId`, so there is no key
+ * on which to join them to local sessions — hence the report renders them as a clearly separate
+ * section rather than folding them into the session table.
  *
  * See `.ai-run/guides/integration/external-integrations.md` and `docs/CURSOR_INTEGRATION.md`.
  */
