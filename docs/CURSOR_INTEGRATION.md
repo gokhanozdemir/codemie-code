@@ -66,9 +66,43 @@ Full rationale for reading an undocumented store, and the constraints that come 
 - **Model** comes from the tracking database. Cursor writes the literal `default` when the user
   delegated model choice; that is reported as **`Auto`** — Cursor's own word for it — never as
   whatever model Cursor happens to default to.
-- **Tokens and cost** come from `cursorDiskKV`'s sparse per-bubble `tokenCount` (present on
-  roughly 1% of bubbles). When a session has no token signal at all, `usageUnavailableReason` is
-  set and the report renders tokens and cost as **unmeasurable**, not as a confident zero.
+- **Tokens and cost** come from `cursorDiskKV`'s sparse per-bubble `tokenCount`. When a session has
+  no token signal at all, `usageUnavailableReason` is set and the report renders tokens and cost as
+  **unmeasurable** — an em dash, not a confident zero and not a claim that the usage was free. See
+  [Expect no token counts from recent Cursor builds](#expect-no-token-counts-from-recent-cursor-builds)
+  before reading anything into a Cursor cost figure.
+
+### Expect no token counts from recent Cursor builds
+
+**Recent Cursor builds write zero `tokenCount` on bubbles, or omit the field entirely, while
+`toolFormerData` keeps working.** Tool-call success/failure enrichment is therefore reliable and
+token/cost enrichment is usually empty. This is the normal, expected shape — not a CodeMie bug,
+not a schema-drift failure, and not something `--include-external` or a wider `--max-age` will fix.
+
+Verified on one operator machine (2026-09-05): of 469 discovered Cursor sessions, **0** carried any
+token signal and **24** carried tool calls. Composers with a nonzero `tokenCount` existed only
+354–408 days back and no longer appeared in `composerHeaders` at all. Widening discovery age to
+harvest those year-old bubbles is explicitly *not* the fix: it would resurface stale conversations
+to manufacture a token total that says nothing about recent work.
+
+What this means when reading a report:
+
+- A Cursor-only view (for example after deselecting every other agent in the top bar) will show
+  **dashes** for Input/Output/Total tokens and Est. cost, plus a note that local token telemetry is
+  absent. That is the filter working correctly on absent data, not a broken agent chip.
+- Cost cells for such sessions are **never** labelled `Included` or "covered by subscription".
+  CodeMie's cost column is an API-equivalent estimate, not a bill, and a missing local token signal
+  is not evidence that the usage was free.
+- When tokens *are* recovered but the model is `Auto`/`default` (or otherwise absent from the price
+  table), the session is estimated at a published Claude Sonnet API rate, keeps its own model label,
+  and is badged as partial. Treat it as an understated floor.
+- The Enterprise Team Analytics API does **not** close this gap: none of its documented endpoints
+  returns token or cost fields at any tier. See
+  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-not-integrated).
+
+Nothing here is inferred from `contextTokensUsed`, transcript text length, or tool-call counts.
+Those correlate with usage but are not billable token counts, and presenting them as such would
+trade an honest blank for a confident wrong number.
 
 ### Database schema and versioning
 

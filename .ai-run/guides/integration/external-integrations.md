@@ -309,6 +309,15 @@ mapping. `codemie analytics` discovers Cursor Agent conversations from Cursor's 
 all read-only and all fail-soft. `CURSOR_HOME` relocates every one of them. Cursor sessions are
 tagged `native-external` and appear only with `--include-external`.
 
+**Recent Cursor builds write zero `tokenCount` on bubbles, or omit it, while `toolFormerData` still
+works** — so tool-call enrichment is reliable and token/cost enrichment is usually empty. Such
+sessions carry `usageUnavailableReason` and render as an em dash, never as `$0`, `Included`, or
+"covered by subscription". Do not widen the default discovery max-age to harvest year-old bubbles
+that still have tokens, and do not infer tokens from `contextTokensUsed`, transcript length, or
+tool-call counts. When tokens *are* recovered under an unpriceable model (`default`/Auto), the cost
+enricher estimates at a published Claude Sonnet rate, preserves the original model label, and marks
+the session `usagePartial`.
+
 Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
 undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
 
