@@ -4,6 +4,7 @@
  */
 
 import type { CursorTeamAnalytics } from '@/agents/plugins/cursor/cursor.team-analytics.js';
+import type { CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
@@ -89,6 +90,12 @@ export interface ReportMeta {
    * fields, so merging it into session rows would invent both a key and a figure.
    */
   cursorTeamAnalytics?: CursorTeamAnalytics;
+  /**
+   * Optional Cursor usage-events CSV import — the only source of real Cursor tokens and cost.
+   * Kept beside the sessions rather than inside them: its rows are per-event with no composerId,
+   * so there is no key to join on, and its totals must never be silently added to session costs.
+   */
+  cursorUsage?: CursorUsageImport;
   periodStart?: string; // ISO — start of the reported range; always present when the report contains any sessions
   periodEnd?: string;   // ISO — end of the reported range; always present when the report contains any sessions
 }
