@@ -16,11 +16,26 @@ import { spawnSync, execFileSync, type SpawnSyncReturns } from 'node:child_proce
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { platform } from 'node:os';
 import { copySsoCredentials, ssoCleanEnv } from './sso-auth.js';
 import { getTempDir } from './temp-workspace.js';
 import { getCodemieTestUrl } from './test-env.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * Synchronous "is this CLI on PATH" check for use in `describe.runIf(...)` at
+ * collection time (vitest evaluates that predicate before any beforeAll/async
+ * hook runs, so the async `commandExists()`/`plugin.isInstalled()` used at
+ * runtime can't gate suite collection). Mirrors the resolution used by
+ * `commandExists()` in src/utils/processes.ts.
+ */
+export function isCliInstalled(command: string): boolean {
+  const isWindows = platform() === 'win32';
+  const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
+  const result = spawnSync(whichCommand, [command], { stdio: 'ignore' });
+  return result.status === 0;
+}
 
 export interface AgentSmokeOptions {
   /** bin file under bin/, e.g. 'codemie-opencode.js'. */

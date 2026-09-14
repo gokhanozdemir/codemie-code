@@ -10,7 +10,9 @@
  * ~/.kimi-code/bin, so redirecting HOME would hide it. The model must be a
  * kimi-* deployment (kimi-k2 is used; kimi accepts any locally, then resolves).
  *
- * Gated on SSO_AVAILABLE. Cleanup: profile restored + temp home removed.
+ * Gated on SSO_AVAILABLE and the `kimi` CLI being on PATH (skips gracefully
+ * on machines that haven't run `codemie install kimi`). Cleanup: profile
+ * restored + temp home removed.
  *
  * Run: npx vitest run --project agent -- agent-kimi
  */
@@ -22,10 +24,11 @@ import {
   runAgentTaskSmoke,
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
+  isCliInstalled,
   type AgentSmokeRun,
 } from '../helpers/index.js';
 
-describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Kimi agent smoke (real)', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false' && isCliInstalled('kimi'))('Kimi agent smoke (real)', () => {
   let originalActiveProfile: string | undefined;
   let run: AgentSmokeRun;
 

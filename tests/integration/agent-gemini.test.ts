@@ -24,44 +24,48 @@
  * Run: npx vitest run --project agent -- agent-gemini
  */
 
-import '../setup/load-test-env.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { rmSync } from 'node:fs';
+import "../setup/load-test-env.js";
+import { rmSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  runAgentTaskSmoke,
-  setupSsoAutotestProfile,
-  teardownSsoAutotestProfile,
-  type AgentSmokeRun,
-} from '../helpers/index.js';
+	type AgentSmokeRun,
+	isCliInstalled,
+	runAgentTaskSmoke,
+	setupSsoAutotestProfile,
+	teardownSsoAutotestProfile,
+} from "../helpers/index.js";
 
-describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Gemini agent smoke (real)', () => {
-  let originalActiveProfile: string | undefined;
-  let run: AgentSmokeRun;
+describe.runIf(
+	process.env.SSO_AVAILABLE !== "false" &&
+		isCliInstalled(process.env.CODEMIE_GEMINI_BIN || "gemini"),
+)("Gemini agent smoke (real)", () => {
+	let originalActiveProfile: string | undefined;
+	let run: AgentSmokeRun;
 
-  beforeAll(() => {
-    originalActiveProfile = setupSsoAutotestProfile();
-    run = runAgentTaskSmoke({
-      binName: 'codemie-gemini.js',
-      // Must be a real gemini-* deployment from the catalog (see MODEL NOTE).
-      model: process.env.CODEMIE_GEMINI_MODEL ?? 'gemini-3.1-pro',
-      isolateHome: true, // keep Gemini's settings.json out of the real ~/.gemini
-      extraEnv: { GEMINI_CLI_TRUST_WORKSPACE: 'true' },
-    });
-  }, 180_000);
+	beforeAll(() => {
+		originalActiveProfile = setupSsoAutotestProfile();
+		run = runAgentTaskSmoke({
+			binName: "codemie-gemini.js",
+			// Must be a real gemini-* deployment from the catalog (see MODEL NOTE).
+			model: process.env.CODEMIE_GEMINI_MODEL ?? "gemini-3.1-pro",
+			isolateHome: true, // keep Gemini's settings.json out of the real ~/.gemini
+			extraEnv: { GEMINI_CLI_TRUST_WORKSPACE: "true" },
+		});
+	}, 180_000);
 
-  afterAll(() => {
-    teardownSsoAutotestProfile(originalActiveProfile);
-    if (run?.testHome) rmSync(run.testHome, { recursive: true, force: true });
-  });
+	afterAll(() => {
+		teardownSsoAutotestProfile(originalActiveProfile);
+		if (run?.testHome) rmSync(run.testHome, { recursive: true, force: true });
+	});
 
-  it('exits 0', () => {
-    expect(
-      run.result.status,
-      `stdout:\n${run.result.stdout ?? ''}\nstderr:\n${run.result.stderr ?? ''}`,
-    ).toBe(0);
-  });
+	it("exits 0", () => {
+		expect(
+			run.result.status,
+			`stdout:\n${run.result.stdout ?? ""}\nstderr:\n${run.result.stderr ?? ""}`,
+		).toBe(0);
+	});
 
-  it('routes the agent response to stdout', () => {
-    expect(run.result.stdout).toMatch(/READY/i);
-  });
+	it("routes the agent response to stdout", () => {
+		expect(run.result.stdout).toMatch(/READY/i);
+	});
 });

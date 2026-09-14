@@ -8,8 +8,10 @@
  * was verified only by hand. Uses the shared agent-smoke harness; HOME is
  * isolated so opencode's own state dir stays out of the developer's real home.
  *
- * Gated on SSO_AVAILABLE (tests/setup/agent-build-setup.ts). Cleanup: profile
- * restored + temp home removed in afterAll.
+ * Gated on SSO_AVAILABLE (tests/setup/agent-build-setup.ts) and the `opencode`
+ * CLI being on PATH (skips gracefully on machines that haven't run
+ * `codemie install opencode`). Cleanup: profile restored + temp home removed
+ * in afterAll.
  *
  * Run: npx vitest run --project agent -- agent-opencode
  */
@@ -21,10 +23,11 @@ import {
   runAgentTaskSmoke,
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
+  isCliInstalled,
   type AgentSmokeRun,
 } from '../helpers/index.js';
 
-describe.runIf(process.env.SSO_AVAILABLE !== 'false')('OpenCode agent smoke (real)', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false' && isCliInstalled(process.env.CODEMIE_OPENCODE_BIN || 'opencode'))('OpenCode agent smoke (real)', () => {
   let originalActiveProfile: string | undefined;
   let run: AgentSmokeRun;
 
