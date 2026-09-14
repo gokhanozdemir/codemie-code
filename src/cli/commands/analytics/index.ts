@@ -24,7 +24,8 @@ export function createAnalyticsCommand(): Command {
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
     .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
     .option('--cursor-usage-csv <path>', 'Import a Cursor usage-events CSV (Cursor dashboard → Usage → Export) for real Cursor tokens and cost. No network call')
-    .option('--cursor-usage-user <email>', 'Which User column value to keep from --cursor-usage-csv (default: your configured CodeMie email)')
+    .option('--cursor-usage-user <email>', 'Which User column value to keep from the Cursor usage export (default: your configured CodeMie email)')
+    .option('--cursor-usage-fetch', 'Download the Cursor usage export instead of passing a file (makes a NETWORK CALL; requires CURSOR_USAGE_EXPORT_URL and a signed-in Cursor app)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -173,22 +174,46 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         }
       }
 
-      // #21: the member path to real Cursor tokens/cost. Pure file read — no network call.
+      // #21/#22: the path to real Cursor tokens/cost — a local file, or the same export fetched.
+      // Both end in the SAME parser, so a downloaded export can never be interpreted differently
+      // from one the operator saved by hand.
       let cursorUsage;
+      const wantedUser = options.cursorUsageUser ?? userEmail;
       if (options.cursorUsageCsv) {
         const { loadCursorUsageCsv } = await import('@/agents/plugins/cursor/cursor.usage-csv.js');
-        const wantedUser = options.cursorUsageUser ?? userEmail;
         cursorUsage = loadCursorUsageCsv(options.cursorUsageCsv, {
           ...(wantedUser !== undefined && { userEmail: wantedUser }),
         }) ?? undefined;
         if (!cursorUsage) {
           console.log(chalk.yellow(`\n  Could not read a Cursor usage export from ${options.cursorUsageCsv}. Report continues without it.`));
-        } else if (cursorUsage.events.length === 0) {
+        }
+      } else if (options.cursorUsageFetch) {
+        // The only network call in the analytics path, and it needs all three of: the flag, a
+        // configured endpoint, and a signed-in Cursor. Any missing piece means no request.
+        const { readCursorSessionCookie, fetchCursorUsageExport } = await import('@/agents/plugins/cursor/cursor.usage-fetch.js');
+        const cookie = await readCursorSessionCookie();
+        cursorUsage = (await fetchCursorUsageExport({
+          enabled: true,
+          ...(process.env.CURSOR_USAGE_EXPORT_URL !== undefined && { exportUrl: process.env.CURSOR_USAGE_EXPORT_URL }),
+          ...(cookie !== undefined && { cookie }),
+          ...(wantedUser !== undefined && { userEmail: wantedUser }),
+          ...(filter.fromDate !== undefined && { startDate: filter.fromDate.toISOString().slice(0, 10) }),
+          ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
+        })) ?? undefined;
+        if (!cursorUsage) {
+          console.log(chalk.yellow('\n  Could not fetch the Cursor usage export. It needs CURSOR_USAGE_EXPORT_URL set and a signed-in'));
+          console.log(chalk.yellow('  Cursor app on this machine; the endpoint is undocumented and may have changed.'));
+          console.log(chalk.yellow('  The supported fallback is to export the CSV from the Cursor dashboard and pass --cursor-usage-csv <path>.'));
+          console.log(chalk.dim('  Run with CODEMIE_DEBUG=true to see the status code. Report continues without it.'));
+        }
+      }
+      if (cursorUsage) {
+        if (cursorUsage.events.length === 0) {
           // The Cursor account's email is frequently NOT the CodeMie config email, which would
           // otherwise silently filter every row away and look like an empty export.
           console.log(chalk.yellow(`\n  Cursor usage export matched no rows for ${wantedUser ?? '(no email configured)'}.`));
           if (cursorUsage.usersInFile.length) {
-            console.log(chalk.yellow(`  The file contains: ${cursorUsage.usersInFile.join(', ')}`));
+            console.log(chalk.yellow(`  The export contains: ${cursorUsage.usersInFile.join(', ')}`));
             console.log(chalk.yellow('  Re-run with --cursor-usage-user <email> to pick one of those.'));
           }
           cursorUsage = undefined;

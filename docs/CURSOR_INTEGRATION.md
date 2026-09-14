@@ -126,6 +126,13 @@ Two facts that decide how it must be read:
 Export rows are per-event with no `composerId`, so they are never joined to local sessions or added
 to any other cost figure — the report shows Cursor's own numbers beside CodeMie's, not summed in.
 
+`--cursor-usage-fetch` can download the same CSV instead, but it is **opt-in and unsupported**: it
+needs `CURSOR_USAGE_EXPORT_URL` (CodeMie ships no undocumented endpoint) and `CURSOR_SESSION_TOKEN`
+(the `WorkosCursorSessionToken` browser cookie, `<userId>::<jwt>`) on top of the flag. The cookie is
+never read out of Cursor's keychain-encrypted Chromium jar and never logged; authentication is that
+cookie, never a `crsr_` admin key. Both paths end in the same parser. File import remains the
+supported route.
+
 ### Database schema and versioning
 
 `state.vscdb` and `ai-code-tracking.db` are Cursor-internal and undocumented; there is no schema
