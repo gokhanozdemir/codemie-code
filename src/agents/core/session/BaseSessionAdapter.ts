@@ -78,6 +78,8 @@ export interface ParsedSession {
       linesAdded?: number;
       linesRemoved?: number;
     }>;
+    // Aggregate files-changed count for adapters that know the total but not individual paths (e.g. Cursor's composerHeaders); when set, this overrides the path-derived count instead of being redundant with it.
+    filesChangedCount?: number;
     // Named invocation breakdowns (skill names, agent subtypes, slash commands)
     skillInvocations?: Record<string, number>;
     agentInvocations?: Record<string, number>;

@@ -418,7 +418,9 @@ export class AnalyticsAggregator {
       totalLinesRemoved,
       totalLinesModified,
       netLinesChanged,
-      filesChanged: changedPaths.size,
+      filesChanged: deltas.some((d) => d.filesChangedCount !== undefined)
+        ? deltas.reduce((sum, d) => sum + (d.filesChangedCount ?? 0), 0)
+        : changedPaths.size,
       filesWritten: writtenPaths.size,
       filesEdited: editedPaths.size,
       totalToolCalls,

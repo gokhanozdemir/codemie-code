@@ -347,6 +347,7 @@ function buildNativeRawSession(
     tools: parsed.metrics?.tools ?? {},
     toolStatus: parsed.metrics?.toolStatus,
     fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
+    ...(parsed.metrics?.filesChangedCount !== undefined && { filesChangedCount: parsed.metrics.filesChangedCount }),
     models,
     // Named invocations are extracted at parse time (e.g. claude.session.ts extractMetrics);
     // carry them through so native (untracked) sessions populate the skill/agent/command charts.
@@ -556,7 +557,13 @@ export function synthesizeRawSession(
 
   return buildNativeRawSession(agentName, descriptor, parsed, {
     cwd: messages.find((m) => m.cwd)?.cwd ?? descriptor.projectPath ?? 'Unknown',
-    branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)),
+    // Per-message gitBranch is the primary signal (it can change mid-session, so a mode vote is
+    // the honest summary) — but a session that recorded no messages at all (e.g. a Cursor
+    // conversation known only through composerHeaders, with no matching transcript) has nothing
+    // to vote over. `parsed.metadata.branch` is where an adapter puts a session-level branch it
+    // knows some other way; falling back to it here is what lets such a session still report a
+    // branch instead of silently losing one.
+    branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)) ?? parsed.metadata.branch,
     startTime: timestamps.length ? Math.min(...timestamps) : descriptor.createdAt,
     endTime: timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt,
     turns: Math.max(assistantMsgs.length, 1),
