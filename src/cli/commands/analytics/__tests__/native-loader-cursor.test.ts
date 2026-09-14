@@ -135,6 +135,11 @@ interface ComposerHeaderRow {
   createdOnBranch?: string;
   createdAt?: number;
   updatedAt?: number;
+  /**
+   * Writes the last-update stamp under the legacy `updatedAt` key instead of the
+   * `lastUpdatedAt` key real Cursor builds use, so the reader's fallback stays covered.
+   */
+  legacyUpdatedAtKey?: boolean;
   linesAdded?: number;
   linesRemoved?: number;
   filesChangedCount?: number;
@@ -161,7 +166,9 @@ async function writeComposerHeaders(rows: ComposerHeaderRow[]): Promise<void> {
       activeBranch: row.branch ? { branchName: row.branch } : undefined,
       createdOnBranch: row.createdOnBranch,
       createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      // Real `composerHeaders` rows name the last-update stamp `lastUpdatedAt`; `updatedAt` is
+      // only the fallback spelling. Fixtures default to what Cursor actually writes.
+      ...(row.legacyUpdatedAtKey ? { updatedAt: row.updatedAt } : { lastUpdatedAt: row.updatedAt }),
       totalLinesAdded: row.linesAdded,
       totalLinesRemoved: row.linesRemoved,
       filesChangedCount: row.filesChangedCount,
@@ -583,6 +590,67 @@ describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor composerHeaders
 
     expect(row.startEvent!.data.startTime).toBe(headerCreated);
     expect(row.endEvent!.data.endTime).toBe(headerUpdated);
+  });
+
+  it('gives a Cursor session a real duration from the header’s own lastUpdatedAt stamp', async () => {
+    // Regression: the reader used to look for `updatedAt`, a key `composerHeaders` never writes.
+    // Every Cursor session therefore collapsed to a zero-width window — `resolveWindow` mirrored
+    // `createdAt` — which zeroed every Cursor duration in the report and left nothing for the
+    // usage-CSV matcher to match against.
+    const created = Date.now() - 10 * HOUR;
+    const updated = created + 25 * 60 * 1000;
+    await writeComposerHeaders([
+      { composerId: 'duration-conv', projectPath: projectDir, createdAt: created, updatedAt: updated },
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.startEvent!.data.startTime).toBe(created);
+    expect(row.endEvent!.data.endTime).toBe(updated);
+    expect(row.endEvent!.data.duration).toBe(25 * 60 * 1000);
+  });
+
+  it('still reads a header that spells the stamp `updatedAt`', async () => {
+    const created = Date.now() - 8 * HOUR;
+    const updated = created + 5 * 60 * 1000;
+    await writeComposerHeaders([
+      {
+        composerId: 'legacy-conv',
+        projectPath: projectDir,
+        createdAt: created,
+        updatedAt: updated,
+        legacyUpdatedAtKey: true,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+
+    expect(cursorRows(rows)[0].endEvent!.data.duration).toBe(5 * 60 * 1000);
+  });
+
+  it('widens a header that dates only its creation with the tracking database’s last edit', async () => {
+    // Half of a real `composerHeaders` table carries `createdAt` and no last-update stamp.
+    // Mirroring `createdAt` for those would report a zero duration for work that demonstrably
+    // continued, so the recorded edit times fill the open end.
+    const created = FIRST_EDIT_MS - HOUR;
+    await writeComposerHeaders([
+      { composerId: 'open-ended-conv', projectPath: projectDir, createdAt: created },
+    ]);
+    await writeTrackingDb([
+      {
+        conversationId: 'open-ended-conv',
+        fileName: join(projectDir, 'src', 'app.ts'),
+        model: 'claude-4.5-sonnet',
+        timestamp: LAST_EDIT_MS,
+      },
+    ]);
+
+    const { rows } = await runLoader();
+    const row = cursorRows(rows)[0];
+
+    expect(row.startEvent!.data.startTime).toBe(created);
+    expect(row.endEvent!.data.endTime).toBe(LAST_EDIT_MS);
   });
 
   it('resolves the composerId from a prefixed key when the JSON value carries none', async () => {

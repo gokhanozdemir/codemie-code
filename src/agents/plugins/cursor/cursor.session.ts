@@ -353,20 +353,29 @@ function applyBranch(messages: CursorNativeMessage[], branch: string | undefined
  * When a conversation ran, preferring `composerHeaders`'s own timestamps over anything derived.
  *
  * A header can record only one end of the window (Cursor's own writes are not guaranteed
- * complete either) — in that case the other end mirrors it rather than falling through to a
- * weaker source for half the answer and a stronger one for the other half.
+ * complete either). The header always wins for the end it does record; the open end falls
+ * through to the recorded edit times rather than mirroring the closed one, which would claim a
+ * zero-length session for work that plainly ran on.
  */
 function resolveWindow(
   header: CursorComposerHeader | undefined,
   filePath: string,
   activity: CursorConversationActivity | undefined
 ): { createdAt: number; updatedAt: number } | undefined {
-  if (header?.createdAt !== undefined || header?.updatedAt !== undefined) {
-    const createdAt = header.createdAt ?? header.updatedAt!;
-    const updatedAt = header.updatedAt ?? header.createdAt!;
-    return { createdAt, updatedAt: Math.max(createdAt, updatedAt) };
+  if (header?.createdAt === undefined && header?.updatedAt === undefined) {
+    return activityWindow(filePath, activity);
   }
-  return activityWindow(filePath, activity);
+
+  const createdAt = header.createdAt ?? header.updatedAt!;
+  if (header.updatedAt !== undefined) {
+    return { createdAt, updatedAt: Math.max(createdAt, header.updatedAt) };
+  }
+
+  // Only one end recorded. Mirroring `createdAt` would report a zero-length session for work
+  // that demonstrably continued — about half of a real `composerHeaders` table dates only its
+  // creation — so the weaker sources close the open end, and only that end.
+  const derived = activityWindow(filePath, activity);
+  return { createdAt, updatedAt: Math.max(createdAt, derived?.updatedAt ?? createdAt) };
 }
 
 /**
