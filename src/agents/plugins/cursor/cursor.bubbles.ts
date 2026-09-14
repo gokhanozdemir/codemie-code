@@ -22,8 +22,9 @@
  */
 
 import { existsSync } from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
+import { asNumber, asString, loadSqlite } from './cursor.sqlite.js';
 
 /** Aggregated tool-outcome and token-usage signal for one Cursor Agent conversation's bubbles. */
 export interface CursorBubbleSummary {
@@ -39,14 +40,6 @@ export interface CursorBubbleSummary {
 
 function emptySummary(): CursorBubbleSummary {
   return { toolStatus: {}, totalInputTokens: 0, totalOutputTokens: 0, hasTokenSignal: false };
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function asPositiveNumber(value: unknown): number {
@@ -127,23 +120,6 @@ function applyTokenCount(
 }
 
 /**
- * `node:sqlite`, or null where it does not exist.
- *
- * The repository supports Node >= 20 and `node:sqlite` only landed in 22.5, so this cannot be a
- * static import: on Node 20 it would throw at module load and take the whole analytics run
- * down. Cursor bubble enrichment from `state.vscdb` is optional — older runtimes simply see no
- * tool/token signal from this source.
- */
-async function loadSqlite(): Promise<typeof import('node:sqlite') | null> {
-  try {
-    return await import('node:sqlite');
-  } catch (error) {
-    logger.debug('[cursor] node:sqlite unavailable — skipping bubble summary:', error);
-    return null;
-  }
-}
-
-/**
  * Summarize tool outcomes and token usage across every bubble belonging to one Cursor Agent
  * conversation, or a zeroed-out summary when the database cannot be read.
  *
@@ -160,7 +136,7 @@ export async function readCursorBubbles(
     return summary;
   }
 
-  const sqlite = await loadSqlite();
+  const sqlite = await loadSqlite('bubble summary');
   if (!sqlite) {
     return summary;
   }

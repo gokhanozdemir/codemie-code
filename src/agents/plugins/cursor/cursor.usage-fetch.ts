@@ -32,6 +32,7 @@
 import { existsSync } from 'node:fs';
 import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
+import { loadSqlite } from './cursor.sqlite.js';
 import { parseCursorUsageCsv, type CursorUsageImport } from './cursor.usage-csv.js';
 
 /** The cookie Cursor's dashboard authenticates with: `<userId>::<accessToken>`. */
@@ -75,16 +76,6 @@ function hostOf(url: string): string {
   }
 }
 
-async function loadSqlite(): Promise<typeof import('node:sqlite') | null> {
-  try {
-    return await import('node:sqlite');
-  } catch {
-    // Node < 22.5 has no node:sqlite. Same fail-soft contract as the rest of the plugin.
-    logger.debug('[cursor] node:sqlite unavailable; cannot read the session cookie');
-    return null;
-  }
-}
-
 /**
  * Read the signed-in session cookie out of Cursor's own state database.
  *
@@ -114,7 +105,7 @@ export async function readCursorSessionCookie(
     logger.debug('[cursor] no state database; cannot read the session cookie');
     return undefined;
   }
-  const sqlite = await loadSqlite();
+  const sqlite = await loadSqlite('the session cookie read');
   if (!sqlite) {
     return undefined;
   }
@@ -125,9 +116,9 @@ export async function readCursorSessionCookie(
     const rows = db
       .prepare(
         `SELECT value FROM ItemTable
-          WHERE key LIKE '%${COOKIE_NAME}%' OR key LIKE 'cursorAuth%'`
+          WHERE key LIKE ? OR key LIKE 'cursorAuth%'`
       )
-      .all() as { value?: unknown }[];
+      .all(`%${COOKIE_NAME}%`) as { value?: unknown }[];
     for (const row of rows) {
       const value = typeof row.value === 'string' ? row.value.trim() : undefined;
       if (value && COOKIE_SHAPE.test(value)) {

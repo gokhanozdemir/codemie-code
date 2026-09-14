@@ -12,7 +12,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 
 /** A `tool_use` block inside an assistant message. */
 interface CursorToolUseBlock {
