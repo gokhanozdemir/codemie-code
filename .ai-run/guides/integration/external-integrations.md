@@ -326,19 +326,22 @@ the session `usagePartial`.
 Full operational and developer guide: `docs/CURSOR_INTEGRATION.md`. Rationale for reading an
 undocumented store: `docs/adr/0001-cursor-session-discovery-from-state-vscdb.md`.
 
-### Cursor Enterprise Team Analytics API (opt-in, admin-only)
+### Cursor Enterprise Team Analytics API (not integrated)
 
 Cursor publishes an official Team Analytics API
 (<https://cursor.com/docs/account/teams/analytics-api>). CodeMie integrates it as a strictly
-opt-in, user-scoped extra for **enterprise team admins**: `src/agents/plugins/cursor/cursor.team-analytics.ts`,
-surfaced by `codemie analytics --report --cursor-team-analytics` with an admin-scoped
-`CURSOR_TEAM_ANALYTICS_API_KEY` set. **Both** are required — a configured credential alone never
-triggers a call — and this is the only network call anywhere in the analytics path.
+**CodeMie does not integrate it.** A complete, reviewed implementation exists on the
+`feature/cursor-team-analytics-untested` branch and was deliberately kept off the shipping branch:
+no one on the team has an enterprise-admin account, so the success path was never exercised
+against the live API (every probe returned `401 Invalid Team API Key`). Shipping untestable code
+that makes network calls is the risk being avoided — not a judgement that the code is wrong.
 
-It still **cannot** supply tokens or cost, and the key is not obtainable by an ordinary team
-member. No CLI, doc, or UI surface may present it as the member route to billable usage; every
-such surface must point at `--cursor-usage-csv` instead. The audience wording is centralized in
-`TEAM_ANALYTICS_AUDIENCE` / `TEAM_ANALYTICS_MEMBER_HINT` so the CLI and report cannot drift.
+Two facts make this an easy trade. The API **cannot** supply tokens or cost at any tier, so it
+never answered the question people actually have about Cursor; and its key is not obtainable by an
+ordinary team member. The path that does work, for everyone, is the dashboard usage export via
+`--cursor-usage-csv`.
+
+If it is ever revived, the constraints below still hold, and the branch already implements them.
 
 What the API is:
 

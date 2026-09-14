@@ -1,8 +1,8 @@
 /**
  * Cursor usage-events CSV import — the member path to real Cursor tokens and cost.
  *
- * Cursor's local stores stopped carrying billable token counts (see docs/CURSOR_INTEGRATION.md),
- * and the Team Analytics API never had them. The dashboard's Usage → Export CSV does: a real
+ * Cursor's local stores stopped carrying billable token counts (see docs/CURSOR_INTEGRATION.md).
+ * The dashboard's Usage → Export CSV still has them: a real
  * 2026-09-05 export held 39,952,466 tokens and $25.25 of Cost across 61 events.
  *
  * The trap this module exists to avoid: **every one of those 61 rows was `Kind=Included`.**

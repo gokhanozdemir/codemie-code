@@ -825,49 +825,6 @@
   };
 
   /**
-   * Cursor Team Analytics — a REMOTE, opt-in source, deliberately kept in its own view.
-   *
-   * It is never merged into the session table and never contributes to any cost or token
-   * figure: the API returns per-user/per-date aggregates with no composerId to join on, and no
-   * token or cost fields to join with. Two different things are being counted, so they are
-   * shown as two different things. The view is hidden entirely unless the pull happened.
-   */
-  VIEWS.cursorteam = function (host) {
-    var ta = DATA.meta.cursorTeamAnalytics;
-    host.appendChild(el('h2', 'view-title', 'Cursor Team API'));
-    if (!ta) {
-      host.appendChild(el('p', 'view-sub', 'Not fetched for this report \u00b7 enterprise team admins only'));
-      // Never leave a non-admin reader chasing a credential they cannot get, for data that would
-      // not answer their question anyway. Name the path that actually works.
-      host.appendChild(el('div', 'empty', 'Cursor Team Analytics is available to <strong>enterprise team admins</strong> with an admin-scoped API key, and it returns edit and activity aggregates only \u2014 never tokens or cost.<br><br>For real Cursor tokens and cost, export your usage from the Cursor dashboard (Usage \u2192 Export) and re-run with <code>--cursor-usage-csv &lt;path&gt;</code>.'));
-      return;
-    }
-    var range = (ta.startDate || '…') + ' → ' + (ta.endDate || '…');
-    host.appendChild(el('p', 'view-sub', 'Team API aggregates (admin) for ' + esc(ta.userEmail) + ' · ' + esc(range)));
-    host.appendChild(el('div', 'alert alert-info', 'Remote <strong>admin team-API</strong> aggregates, shown separately on purpose. These are Cursor\u2019s own edit and activity counters for your account. They carry <strong>no token or cost fields</strong> and no session key, so nothing here is joined to the local sessions or added to any cost figure elsewhere in this report \u2014 and this section can never tell you what Cursor cost. For that, import a usage export with <code>--cursor-usage-csv</code>.'));
-    if (ta.failedEndpoints && ta.failedEndpoints.length) {
-      host.appendChild(el('div', 'alert alert-warning', 'Incomplete: ' + esc(ta.failedEndpoints.join(', ')) + ' could not be fetched, so this section is partial.'));
-    }
-    (ta.metrics || []).forEach(function (m) {
-      var c = card(m.label, m.endpoint);
-      var rows = m.rows || [];
-      if (!rows.length) {
-        c._body.appendChild(el('div', 'empty', 'No rows returned for this range.'));
-      } else {
-        // Column set is whatever the API sent — the report does not curate or rename it, so a
-        // field Cursor adds later shows up as itself rather than being silently dropped.
-        var cols = [];
-        rows.forEach(function (r) { Object.keys(r).forEach(function (k) { if (cols.indexOf(k) === -1) cols.push(k); }); });
-        var body = rows.map(function (r) {
-          return cols.map(function (k) { return esc(r[k] == null ? '—' : (typeof r[k] === 'object' ? JSON.stringify(r[k]) : r[k])); });
-        });
-        c._body.innerHTML = '<div class="table-wrapper">' + tableHTML(cols, body) + '</div>';
-      }
-      host.appendChild(c);
-    });
-  };
-
-  /**
    * Cursor usage-events CSV — the only source of real Cursor tokens and cost.
    *
    * Cursor's local stores stopped recording billable tokens, so the session table shows dashes
@@ -1566,9 +1523,7 @@
     document.querySelectorAll('.nav-i').forEach(function (n) { n.classList.toggle('active', n.getAttribute('data-view') === state.view); });
     // The remote-source view is opt-in; without a pull there is nothing to navigate to.
     document.querySelectorAll('.nav-i[data-optional]').forEach(function (n) {
-      var v = n.getAttribute('data-view');
-      if (v === 'cursorteam' && !DATA.meta.cursorTeamAnalytics) n.style.display = 'none';
-      if (v === 'cursorusage' && !DATA.meta.cursorUsage) n.style.display = 'none';
+      if (n.getAttribute('data-view') === 'cursorusage' && !DATA.meta.cursorUsage) n.style.display = 'none';
     });
   }
 
