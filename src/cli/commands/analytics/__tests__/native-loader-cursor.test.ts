@@ -305,7 +305,7 @@ describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor enrichment from
     expect(row.startEvent!.data.workingDirectory).toBe(projectDir);
   });
 
-  it('reports a model recorded as "default" as unknown rather than guessing one', async () => {
+  it('reports a model recorded as "default" as Auto, the name Cursor gives it', async () => {
     writeTranscript('conv-a', conversation('add cursor analytics'));
     await writeTrackingDb([
       {
@@ -319,8 +319,9 @@ describe.skipIf(!hasNodeSqlite())('loadNativeSessions — Cursor enrichment from
     const { rows } = await runLoader();
     const row = cursorRows(rows)[0];
 
-    expect(row.deltas[0].models).toEqual([]);
-    // Enrichment still happened — only the meaningless model string was dropped.
+    // Cursor's own usage export calls these conversations `auto`, so "Auto" is its word, not a
+    // guess at which model actually ran — that is still never invented.
+    expect(row.deltas[0].models).toEqual(['Auto', 'Auto']);
     expect(row.deltas[0].fileOperations?.map((f) => f.path)).toEqual([join(projectDir, 'src', 'app.ts')]);
   });
 
