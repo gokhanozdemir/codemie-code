@@ -111,7 +111,8 @@ The gap above is *local*. Cursor's dashboard still exports the billable ledger: 
 produces a `team-usage-events-*.csv` carrying per-event input, cache-write, cache-read, output and
 total tokens, usually with a `Cost` column. Import it with `--cursor-usage-csv <path>` (no network
 call, no credential) and CodeMie converts it into ordinary sessions, so its tokens and cost reach
-every figure in the report. The **Cursor Usage CSV** tab remains as the per-event detail view.
+every figure in the report. There is no separate Cursor tab: the import becomes ordinary sessions,
+so it lands in Overview, Cost, Tools & Models and Coverage like any other agent's data.
 
 Two facts that decide how it must be read:
 

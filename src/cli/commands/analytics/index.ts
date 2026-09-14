@@ -198,7 +198,6 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         projectFilter: options.project ?? 'all',
         generatedAt: new Date().toISOString(),
         ...(userEmail !== undefined && { userEmail }),
-        ...(cursorUsage !== undefined && { cursorUsage }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
