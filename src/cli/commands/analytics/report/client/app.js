@@ -60,11 +60,15 @@
   // read as "this session was free", so every money/token cell goes through these helpers
   // and shows an em dash instead. Aggregates only dash out when NOTHING in the group was
   // measurable — a mixed group still shows the real sum of what was measured.
+  // "Included" is Cursor's own word: its usage export marks every such event Kind=Included,
+  // meaning covered by the subscription rather than separately priced. It is used only for the
+  // cost cell — a token count has no equivalent, so those stay an em dash.
+  var UNPRICED_LABEL = 'Included';
   function usageUnknown(s) { return !!(s && s.usageUnavailableReason); }
   function anyMeasured(list) { return (list || []).some(function (s) { return !usageUnknown(s); }); }
-  function fmtUSDOf(s, n) { return usageUnknown(s) ? '—' : fmtUSD(n); }
+  function fmtUSDOf(s, n) { return usageUnknown(s) ? UNPRICED_LABEL : fmtUSD(n); }
   function fmtTokensOf(s, n) { return usageUnknown(s) ? '—' : fmtTokens(n); }
-  function fmtUSDAgg(list, n) { return anyMeasured(list) ? fmtUSD(n) : '—'; }
+  function fmtUSDAgg(list, n) { return anyMeasured(list) ? fmtUSD(n) : UNPRICED_LABEL; }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function shortPath(p) { var parts = String(p || '').split('/'); return parts[parts.length - 1] || p; }
@@ -1253,7 +1257,7 @@
     // which bills in premium requests rather than tokens, and whose older CLI versions
     // recorded no telemetry at all). Appended so other agents' cards are unchanged.
     var costRows = [
-      ['Cost', fmtUSDOf(s, s.costUSD), usageUnknown(s) ? 'not measurable' : 'API-equivalent'],
+      ['Cost', fmtUSDOf(s, s.costUSD), usageUnknown(s) ? 'covered by subscription' : 'API-equivalent'],
       ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
       ['Duration', fmtDuration(s.durationMs || 0), ''],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']

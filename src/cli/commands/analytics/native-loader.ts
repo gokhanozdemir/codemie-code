@@ -37,22 +37,6 @@ function isPiAgent(agentName: string): boolean {
   return agentName.toLowerCase() === 'pi';
 }
 
-/**
- * Agents CodeMie only reads analytics for and never installs, launches, or manages.
- *
- * The ownership gate below exists to stop analytics silently counting UNMANAGED runs of an
- * agent CodeMie CAN manage (EPMCDME-13367). A truly analytics-only agent has no managed
- * variant, so it can never carry an ownership marker — applying the gate would tag 100% of
- * its sessions `native-external` and drop them from the default report.
- */
-function isAnalyticsOnlyAgent(agentName: string): boolean {
-  try {
-    return AgentRegistry.getAgent(agentName)?.metadata.analyticsOnly === true;
-  } catch {
-    return false;
-  }
-}
-
 /** A discovered native session paired with its agent. */
 export interface DiscoveredNative {
   agentName: string;
@@ -749,15 +733,13 @@ export async function loadNativeSessions(
       continue;
     }
     const raw = synthesizeRawSession(agentName, descriptor, parsed);
+    // One rule for every agent: a session CodeMie cannot prove it launched is external, and
+    // external sessions are opt-in behind `--include-external`. That holds for analytics-only
+    // agents too — CodeMie did not run them, so the default report does not claim them. Set one
+    // up through CodeMie and its sessions carry an ownership marker, keeping the plain 'native'
+    // tag that means "CodeMie launched this" and showing with no flag.
     if (raw.startEvent && !deps.hasOwnershipMarker(descriptor.filePath)) {
-      // Truly analytics-only agents can never carry an ownership marker, so tagging them
-      // 'native-external' would drop 100% of their sessions from the default report. They
-      // still are not CodeMie-managed, so they get their own tag rather than the plain
-      // 'native' that means "CodeMie launched this". Managed agents, including Copilot CLI,
-      // remain 'native-external' when their transcript lacks CodeMie ownership.
-      raw.startEvent.data.provider = isAnalyticsOnlyAgent(agentName)
-        ? 'native-unmanaged'
-        : 'native-external';
+      raw.startEvent.data.provider = 'native-external';
     }
     out.push(raw);
   }

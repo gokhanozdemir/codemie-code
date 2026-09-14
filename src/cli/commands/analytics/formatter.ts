@@ -169,9 +169,7 @@ export class AnalyticsFormatter {
     const providerLabel =
       session.provider === 'native-external'
         ? chalk.yellow('native [external ⚠ not CodeMie-managed]')
-        : session.provider === 'native-unmanaged'
-          ? chalk.gray('native [not CodeMie-managed — analytics only]')
-          : session.provider;
+        : session.provider;
     console.log(chalk.gray(`      Provider:  `) + providerLabel);
     console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)}`));
     console.log(chalk.gray(`      Turns:     ${session.totalTurns}`));
