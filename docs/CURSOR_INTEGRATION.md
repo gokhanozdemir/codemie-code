@@ -110,7 +110,8 @@ trade an honest blank for a confident wrong number.
 The gap above is *local*. Cursor's dashboard still exports the billable ledger: **Usage → Export**
 produces a `team-usage-events-*.csv` carrying per-event input, cache-write, cache-read, output and
 total tokens, usually with a `Cost` column. Import it with `--cursor-usage-csv <path>` (no network
-call, no credential) and CodeMie renders it as a separate **Cursor Usage CSV** report section.
+call, no credential) and CodeMie converts it into ordinary sessions, so its tokens and cost reach
+every figure in the report. The **Cursor Usage CSV** tab remains as the per-event detail view.
 
 Two facts that decide how it must be read:
 
@@ -123,8 +124,16 @@ Two facts that decide how it must be read:
   instead and has no cost at all. Both parse; the section dashes the money and says why when `Cost`
   is missing. Some `Cost` cells also read `Free` and contribute zero.
 
-Export rows are per-event with no `composerId`, so they are never joined to local sessions or added
-to any other cost figure — the report shows Cursor's own numbers beside CodeMie's, not summed in.
+Export rows carry no `composerId`, so they are matched on **time** instead: an event whose
+timestamp falls inside exactly one Cursor session's activity window is attributed to that session
+and overwrites its empty usage. An event that no window contains, or that several overlapping
+windows contain, goes to a `Cursor usage — <date>` daily rollup — CodeMie refuses to choose between
+two candidate sessions, the same way it refuses to guess an ambiguous project slug. Either way each
+event is counted exactly once, so the report's totals equal the export's own.
+
+Every cost line this produces is tagged `costBasis: "vendor-billed"`: Cursor billed that amount and
+CodeMie recorded it. Every other cost line in the report is CodeMie's estimate from a pricing
+table, and the report keeps that distinction visible.
 
 `--cursor-usage-fetch` can download the same CSV instead, but it is **opt-in and unsupported**: it
 needs `CURSOR_USAGE_EXPORT_URL` (CodeMie ships no undocumented endpoint) and `CURSOR_SESSION_TOKEN`

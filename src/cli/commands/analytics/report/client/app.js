@@ -848,7 +848,7 @@
     host.appendChild(el('p', 'view-sub', fmtNum(u.totals.events) + ' usage events \u00b7 ' + esc(range) + (u.usersInFile && u.usersInFile.length === 1 ? ' \u00b7 ' + esc(u.usersInFile[0]) : '')));
 
     // The single most important thing a reader can misunderstand about this data.
-    host.appendChild(el('div', 'alert alert-info', 'Cursor\u2019s own figures, imported from your dashboard export \u2014 not a CodeMie estimate. Rows marked <strong>Included</strong> are covered by your Cursor plan, which is a billing category, not zero usage: they still carry real tokens and cost, and both are counted here. These events have no session id, so they are shown beside the session table rather than merged into it, and they are not added to any cost figure elsewhere in this report.'));
+    host.appendChild(el('div', 'alert alert-info', 'Cursor\u2019s own figures, imported from your dashboard export \u2014 not a CodeMie estimate. Rows marked <strong>Included</strong> are covered by your Cursor plan, which is a billing category, not zero usage: they still carry real tokens and cost, and both are counted here. This tab is the per-event detail. Every one of these events is also counted once as an ordinary session elsewhere in the report \u2014 attributed to the Cursor session whose activity window contains it, or, when no single window does, to a <strong>Cursor usage \u2014 &lt;date&gt;</strong> daily rollup \u2014 so the Overview, Cost and Tools figures all include them.'));
 
     var kpis = [
       ['Events', fmtNum(u.totals.events)],

@@ -371,9 +371,21 @@ Things worth knowing about the export format:
   imported whole, since there is no one else's data in it to exclude. If the filter matches
   nothing, CodeMie warns and lists the addresses actually present rather than showing an empty
   section.
-- **It is never merged into your sessions.** Export rows are per-event with no session id, so
-  there is no key to join them on. The section sits beside the session table and contributes to no
-  cost figure elsewhere in the report. Read them side by side, not summed.
+- **Every event is counted once, everywhere.** Export rows are per-event with no session id, so
+  there is no key to join them on directly. CodeMie matches each event by *time* instead: an event
+  whose timestamp falls inside exactly one Cursor session's activity window is attributed to that
+  session. Anything else — no window contains it, or several overlapping ones do — lands in a
+  `Cursor usage — <date>` daily rollup, which behaves as an ordinary session throughout the
+  report. CodeMie never picks between two candidate sessions; an ambiguous event goes to the
+  rollup rather than to a guess.
+
+  The upshot: the Overview, Cost, Tools & Models and Coverage figures all include these tokens and
+  this cost, and they add up to the export's own totals exactly once. The **Cursor Usage CSV** tab
+  is the per-event detail view, not a separate total to add on.
+- **These are Cursor's figures, not CodeMie's estimate.** Every cost line derived from the export
+  is tagged `costBasis: "vendor-billed"` in the report payload — Cursor billed that amount, and
+  CodeMie merely recorded it. Every other cost line in the report is computed from tokens and a
+  pricing table.
 
 <a id="cursor-usage-fetch"></a>
 
@@ -468,7 +480,8 @@ With `--include-external`, Cursor sessions appear. To see the behaviour that sur
 most, **deselect every agent except Cursor** in the top bar.
 
 **Expect:** Overview's Input/Output/Total token KPIs and Est. cost all go to `—`, with a note
-saying local token telemetry is absent — *and the tool-call tables keep working*.
+saying local token telemetry is absent — *and the tool-call tables keep working*. (This is the
+state *without* a usage export; step 4 is how those dashes become numbers.)
 
 That is correct, not a bug: recent Cursor builds record no billable token counts locally. If you
 instead see `$0.00`, `0`, or the word `Included` anywhere, that **is** a bug — those were removed
@@ -486,8 +499,26 @@ codemie analytics --report --open --include-external \
   --cursor-usage-csv ~/Downloads/team-usage-events-*.csv
 ```
 
-**Expect:** a new **Cursor Usage CSV** entry in the sidebar (it is hidden when no export is
-imported) showing Events, Total tokens and Cost, plus by-model and by-day tables.
+**Expect**, before any table is printed:
+
+```
+  Imported 61 Cursor usage event(s): 39,952,466 tokens, $25.25 (Cursor's own billing).
+  20 attributed to a Cursor session; 41 in 3 daily rollup(s) — no session window matched them unambiguously.
+```
+
+Those two lines print for **every** run that passes the flag, report or not — so
+`codemie analytics --cursor-usage-csv f.csv` on its own tells you what it imported.
+
+In the report, expect a new **Cursor Usage CSV** entry in the sidebar (hidden when no export is
+imported) showing Events, Total tokens and Cost, plus by-model and by-day tables — and the same
+figures folded into the rest of the report:
+
+- Overview's **Est. cost** and Cost's **Total est. cost** agree, both including the import.
+- Cursor's models (`auto`, `cursor-grok-*`, …) appear in **both** "Cost by model" and
+  "Tokens by model", spelled the same way in each.
+- **Coverage by agent** reports Cursor as priced for the sessions the export reached.
+- Deselecting every agent except Cursor still shows real figures — the rollups are Cursor
+  sessions like any other.
 
 Sanity-check the totals against the file itself. (This handles both export shapes, the `Free`
 cost cells, and the CRLF line endings the export ships — a naive `awk` over the last column
@@ -510,8 +541,9 @@ else:
 EOF
 ```
 
-The report's Events, Total tokens and Cost KPIs should match that line exactly. **Every row saying
-`Included` still contributes** — that word is a billing category, not zero usage.
+The report's Events, Total tokens and Cost KPIs should match that line exactly — and so should the
+`Imported …` line the command printed, since each event is counted once and only once. **Every row
+saying `Included` still contributes** — that word is a billing category, not zero usage.
 
 **If the section is missing**, the terminal tells you which check failed:
 

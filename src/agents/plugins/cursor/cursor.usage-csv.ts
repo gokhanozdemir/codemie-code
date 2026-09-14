@@ -14,8 +14,9 @@
  * while at least one variant ships `Requests` instead and has no cost at all. Tokens are the
  * durable part; cost is optional.
  *
- * Rows are per-event with no composerId, so they cannot be joined to local sessions. The report
- * renders them as their own labelled section for exactly that reason.
+ * Rows are per-event with no composerId, so they cannot be joined to local sessions by id. This
+ * module's job ends at parsing; `cursor-usage-loader.ts` matches the events to sessions by time
+ * and converts them into the shapes the analytics pipeline consumes.
  */
 
 import { readFileSync } from 'node:fs';
