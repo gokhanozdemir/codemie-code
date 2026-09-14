@@ -9,9 +9,10 @@
  *   management surface (install, uninstall, update, list, doctor, first-run). `codemie update`
  *   in particular would otherwise run `npm install -g` against a package Cursor does not have.
  * - the analytics ownership gate (`isAnalyticsOnlyAgent` in `native-loader.ts`) skips it.
- *   That gate exists to hide unmanaged runs of an agent CodeMie CAN manage; Cursor has no
- *   managed variant, so applying it would tag every Cursor session `native-external` and drop
- *   the whole agent from the default report.
+ *   That gate exists to hide *external* sessions — runs of an agent CodeMie CAN manage that it
+ *   did not launch. Cursor has no managed variant, so its sessions are *unmanaged* rather than
+ *   external; applying the gate would tag every one `native-external` and drop the whole agent
+ *   from the default report. (See `CONTEXT.md` for both terms.)
  *
  * There is therefore no npm package, no CLI command, no env mapping and no provider list —
  * none of the launch machinery is ever reached. The plugin exists solely to hand the registry
