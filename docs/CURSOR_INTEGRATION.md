@@ -97,12 +97,34 @@ What this means when reading a report:
   table), the session is estimated at a published Claude Sonnet API rate, keeps its own model label,
   and is badged as partial. Treat it as an understated floor.
 - The Enterprise Team Analytics API does **not** close this gap: none of its documented endpoints
-  returns token or cost fields at any tier. See
-  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-not-integrated).
+  returns token or cost fields at any tier, and it needs an **admin-scoped** key an ordinary team
+  member cannot obtain. See
+  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-opt-in).
 
 Nothing here is inferred from `contextTokensUsed`, transcript text length, or tool-call counts.
 Those correlate with usage but are not billable token counts, and presenting them as such would
 trade an honest blank for a confident wrong number.
+
+### The usage export does have the numbers
+
+The gap above is *local*. Cursor's dashboard still exports the billable ledger: **Usage → Export**
+produces a `team-usage-events-*.csv` carrying per-event input, cache-write, cache-read, output and
+total tokens, usually with a `Cost` column. Import it with `--cursor-usage-csv <path>` (no network
+call, no credential) and CodeMie renders it as a separate **Cursor Usage CSV** report section.
+
+Two facts that decide how it must be read:
+
+- **`Kind=Included` is a billing category, not zero usage.** It means "covered by your plan". In a
+  verified 2026-09-05 export, all 61 events were `Included` and together carried 39,952,466 tokens
+  and $25.25 of cost. Treating `Included` as free would discard the only accurate Cursor figures
+  available, so CodeMie counts tokens and `Cost` regardless of `Kind` — and never uses "Included"
+  as a cost label in the UI.
+- **Two export shapes exist.** Most end with a `Cost` column; at least one variant ships `Requests`
+  instead and has no cost at all. Both parse; the section dashes the money and says why when `Cost`
+  is missing. Some `Cost` cells also read `Free` and contribute zero.
+
+Export rows are per-event with no `composerId`, so they are never joined to local sessions or added
+to any other cost figure — the report shows Cursor's own numbers beside CodeMie's, not summed in.
 
 ### Database schema and versioning
 
@@ -127,7 +149,7 @@ column that moved (see [Database schema drift](#database-schema-drift-after-a-cu
 |---|---|
 | `CURSOR_HOME` | Overrides `~/.cursor`. Also relocates `state.vscdb` to `$CURSOR_HOME/User/globalStorage/state.vscdb`, mirroring its real layout relative to Cursor's app-data root. Unset (the default) uses `~/.cursor` plus the per-OS app-data path above. |
 | `CODEMIE_DEBUG=true` | Enables the `[cursor]` debug logging described under [Logging and debugging](#logging-and-debugging). |
-| `CURSOR_TEAM_ANALYTICS_API_KEY` | Admin-scoped Cursor Enterprise API key. Required *together with* `--cursor-team-analytics` before any network call is made; neither alone is enough. Unset (the default) means analytics stays entirely local. |
+| `CURSOR_TEAM_ANALYTICS_API_KEY` | **Admin-scoped** Cursor Enterprise API key, for enterprise team admins only. Required *together with* `--cursor-team-analytics` before any network call is made; neither alone is enough. It returns edit/activity aggregates, **never tokens or cost** — for those use `--cursor-usage-csv`, which needs no credential. Unset (the default) means analytics stays entirely local. |
 
 `CURSOR_HOME` mirrors `COPILOT_HOME` in the Copilot CLI plugin and is what lets the whole
 ingestion path be driven against a fixture tree in tests.
