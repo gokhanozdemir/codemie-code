@@ -30,8 +30,7 @@ codemie analytics --report --open --include-external
 
 # Real Cursor tokens and cost — import a usage export from the Cursor dashboard
 # (Cursor records no billable tokens locally; see "Cursor — why it needs a CSV")
-codemie analytics --report --open --include-external \
-  --cursor-usage-csv ~/Downloads/team-usage-events-....csv
+codemie analytics --report --open --include-external --cursor-usage-csv ~/Downloads/team-usage-events-....csv
 ```
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
@@ -174,8 +173,6 @@ The report will not paper over that gap:
   structural zero and a genuine zero look different because they mean different things.
 - Aggregates dash out only when **nothing** in the group was measurable. A mixed group still shows
   the real sum of whatever was measured, so known data is never hidden by unknown peers.
-- No cell is ever labelled `Included` or "covered by subscription". Your plan's billing status is
-  not something the local logs record, and absence of a token count is not evidence of free usage.
 
 #### Estimated costs and the partial badge
 
@@ -487,153 +484,6 @@ With this source, **cost is authoritative**: it is read directly from each event
 
 ---
 
-## Verifying it works
-
-Concrete checks you can run yourself, in the order that builds confidence fastest. Each says what
-to run, what you should see, and what it means if you see something else.
-
-### 1. Does a report build at all?
-
-```bash
-codemie analytics --report --report-output /tmp/check.html
-```
-
-**Expect:** `✓ HTML report written to: /tmp/check.html`, preceded by terminal tables. Open it — the
-sidebar should list Overview through Sessions.
-
-If you get *"No sessions found matching the specified criteria"*, you have no CodeMie-launched
-sessions in range. Add `--include-external` (below) or widen with `--last 90d`.
-
-### 2. Do your non-CodeMie sessions appear?
-
-```bash
-codemie analytics --report --open --include-external --last 30d
-```
-
-**Expect:** a higher session count than step 1, and more agents in the top filter bar. This is the
-flag that answers "what did AI actually cost me?" — see
-[Session provenance](#session-provenance).
-
-### 3. Cursor sessions and the honest empty state
-
-With `--include-external`, Cursor sessions appear. To see the behaviour that surprises people
-most, **deselect every agent except Cursor** in the top bar.
-
-**Expect:** Overview's Input/Output/Total token KPIs and Est. cost all go to `—`, with a note
-saying local token telemetry is absent — *and the tool-call tables keep working*. (This is the
-state *without* a usage export; step 4 is how those dashes become numbers.)
-
-That is correct, not a bug: recent Cursor builds record no billable token counts locally. If you
-instead see `$0.00`, `0`, or the word `Included` anywhere, that **is** a bug — those were removed
-deliberately (see [When cost and tokens show `—`](#unknown-cost)).
-
-### 4. Real Cursor tokens and cost, from the usage export
-
-This is the check that turns those dashes into numbers.
-
-1. In Cursor, open **Usage** → **Export**, choosing a period you actually worked in.
-2. Run:
-
-```bash
-codemie analytics --report --open --include-external \
-  --cursor-usage-csv ~/Downloads/team-usage-events-*.csv
-```
-
-**Expect**, before any table is printed:
-
-```
-  Imported 61 Cursor usage event(s): 39,952,466 tokens, $25.25 (Cursor's own billing).
-  20 attributed to a Cursor session; 41 in 3 daily rollup(s) — no session window matched them unambiguously.
-```
-
-Those two lines print for **every** run that passes the flag, report or not — so
-`codemie analytics --cursor-usage-csv f.csv` on its own tells you what it imported.
-
-In the report, expect those figures folded into the ordinary views — there is no separate Cursor
-tab to look in:
-
-- Overview's **Est. cost** and Cost's **Total est. cost** agree, both including the import.
-- Cursor's models (`auto`, `cursor-grok-*`, …) appear in **both** "Cost by model" and
-  "Tokens by model", spelled the same way in each.
-- **Coverage by agent** reports Cursor as priced for the sessions the export reached.
-- Deselecting every agent except Cursor still shows real figures — the rollups are Cursor
-  sessions like any other.
-
-Sanity-check the totals against the file itself. (This handles both export shapes, the `Free`
-cost cells, and the CRLF line endings the export ships — a naive `awk` over the last column
-silently sums `Requests` on the no-`Cost` variant and prints a plausible, wrong dollar figure.)
-
-```bash
-python3 - ~/Downloads/team-usage-events-....csv <<'EOF'
-import csv, re, sys
-rows = list(csv.DictReader(open(sys.argv[1], newline='', encoding='utf-8-sig')))
-
-def num(v):
-    m = re.search(r'-?\d+(?:\.\d+)?', (v or '').replace(',', ''))
-    return float(m.group()) if m else 0.0
-
-tok = sum(int(r['Total Tokens'] or 0) for r in rows)
-if rows and 'Cost' in rows[0]:
-    print(f"{len(rows)} events, {tok:,} tokens, ${sum(num(r['Cost']) for r in rows):.2f}")
-else:
-    print(f"{len(rows)} events, {tok:,} tokens (this export has no Cost column)")
-EOF
-```
-
-The report's Events, Total tokens and Cost KPIs should match that line exactly — and so should the
-`Imported …` line the command printed, since each event is counted once and only once. **Every row
-saying `Included` still contributes** — that word is a billing category, not zero usage.
-
-**If nothing was imported**, the `Imported …` line is absent and the terminal names the check that
-failed:
-
-| Message | Meaning | Fix |
-|---|---|---|
-| `Could not read a Cursor usage export from …` | Wrong path, or not a usage CSV | Check the path; confirm the header starts `Date,User,…` |
-| `matched no rows for <email>` + `The export contains: …` | Your Cursor account email differs from your CodeMie one | Re-run with `--cursor-usage-user <the listed email>` |
-| Tokens imported but cost is `$0.00` | This export variant has no `Cost` column (it ships `Requests`) | Expected; re-export from a period Cursor priced, or read the token columns |
-
-### 5. Optional: fetching that export automatically
-
-Only worth trying after step 4 works. It is opt-in and unsupported — see
-[Downloading it automatically](#cursor-usage-fetch).
-
-You need the endpoint URL, which CodeMie deliberately does not ship. To find it: open the Cursor
-dashboard **Usage** page in your browser, open DevTools → **Network**, click **Export**, and copy
-the request URL of the CSV download. The session cookie is `WorkosCursorSessionToken` in the same
-request's headers (`<userId>::<jwt>`).
-
-```bash
-export CURSOR_USAGE_EXPORT_URL='<the request URL you copied>'
-export CURSOR_SESSION_TOKEN='<userId>::<jwt>'
-codemie analytics --report --open --include-external --cursor-usage-fetch
-```
-
-**Expect:** the same imported figures as step 4, without having saved a file.
-
-To prove the gate rather than the happy path, unset either variable and re-run: no request should
-be made at all. `CODEMIE_DEBUG=true` prints the outcome per attempt — status code and endpoint
-host only, never your token.
-
-| Symptom | Meaning |
-|---|---|
-| `usage export fetch skipped (needs the opt-in flag, an export URL, and a session cookie)` | One of the three is missing — the gate working |
-| `returned HTTP 401` / `403` | Cookie expired or wrong; re-copy it from a fresh request |
-| `was not a usage CSV` | The endpoint returned a sign-in page, not an export |
-
-### 6. Regression checks, if you are changing this code
-
-```bash
-npm run typecheck && npm run lint
-npx vitest run src/agents/plugins/cursor/__tests__/          # Cursor plugin, incl. CSV + fetch
-npx vitest run --project unit --project cli                  # everything
-```
-
-The CSV tests assert against a fixture copied verbatim from a real export — 61 events,
-39,952,466 tokens, $25.25, including its two `Free` cost cells — so a parser regression shows up
-as a changed total rather than as a vague failure.
-
----
 
 ## CLI Reference
 
