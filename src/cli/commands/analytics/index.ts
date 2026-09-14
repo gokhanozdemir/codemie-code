@@ -16,7 +16,7 @@ import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import type { CostSummary, SessionCostIndex } from './cost/types.js';
 import type { CursorUsageSessions } from './cursor-usage-loader.js';
-import type { CursorUsageImport } from '../../../agents/plugins/cursor/cursor.usage-csv.js';
+import type { CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
@@ -113,10 +113,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     const cursorUsage = await resolveCursorUsage(options, filter, userEmail);
     if (cursorUsage) {
       const { buildCursorUsageSessions } = await import('./cursor-usage-loader.js');
-      const built = buildCursorUsageSessions(
-        cursorUsage,
-        rawSessions.filter((r) => r.startEvent?.agentName === 'cursor')
-      );
+      const built = buildCursorUsageSessions(cursorUsage, rawSessions);
       rawSessions.push(...built.rawSessions);
       const index = new Map([...(costResult?.index ?? []), ...built.costIndex]);
       costResult = { index, summary: summarize(index, costResult?.summary.unpricedModels ?? []) };

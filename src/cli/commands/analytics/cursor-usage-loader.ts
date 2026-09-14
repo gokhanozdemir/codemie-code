@@ -29,10 +29,10 @@
  */
 
 import type { RawSessionData, SessionStartEvent, SessionEndEvent } from './data-loader.js';
-import type { MetricDelta } from '../../../agents/core/metrics/types.js';
+import type { MetricDelta } from '@/agents/core/metrics/types.js';
 import type { SessionCost, SessionCostIndex, CostSummary, TokenUsage, ModelCost } from './cost/types.js';
 import { emptyUsage, addUsage } from './cost/cost-calculator.js';
-import type { CursorUsageEvent, CursorUsageImport } from '../../../agents/plugins/cursor/cursor.usage-csv.js';
+import type { CursorUsageEvent, CursorUsageImport } from '@/agents/plugins/cursor/cursor.usage-csv.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
 
 /** The agent every synthesized session is attributed to — Cursor's rows are Cursor's. */
@@ -60,6 +60,21 @@ interface SessionWindow {
   end: number;
 }
 
+/** The model an event is attributed to, normalized and with one fallback for a blank cell. */
+function modelOf(event: CursorUsageEvent): string {
+  return normalizeModelName(event.model || '(unknown)');
+}
+
+/** Append to a map of grouped events, creating the group on first sight. */
+function pushInto(groups: Map<string, CursorUsageEvent[]>, key: string, event: CursorUsageEvent): void {
+  const group = groups.get(key);
+  if (group) {
+    group.push(event);
+  } else {
+    groups.set(key, [event]);
+  }
+}
+
 /** Convert the export's token columns into the pipeline's normalized usage shape. */
 function toUsage(event: CursorUsageEvent): TokenUsage {
   const { input, output, cacheRead, cacheCreation, total } = event.tokens;
@@ -78,12 +93,17 @@ function toUsage(event: CursorUsageEvent): TokenUsage {
 /**
  * The activity windows usable for matching.
  *
- * A zero-width window is kept: an event stamped at that exact instant is still unambiguously
- * that session's. A session with no usable start is not — there is nothing to compare against.
+ * Only Cursor's own sessions are considered — no other agent's window can contain a Cursor usage
+ * event, and including them would only manufacture false ambiguity. A zero-width window is kept:
+ * an event stamped at that exact instant is still unambiguously that session's. A session with no
+ * usable start is not — there is nothing to compare against.
  */
 function windowsOf(sessions: RawSessionData[]): SessionWindow[] {
   const windows: SessionWindow[] = [];
   for (const session of sessions) {
+    if (session.startEvent?.agentName !== AGENT_NAME) {
+      continue;
+    }
     const start = session.startEvent?.data.startTime;
     if (start === undefined || !Number.isFinite(start) || start <= 0) {
       continue;
@@ -134,7 +154,7 @@ function toSessionCost(sessionId: string, events: CursorUsageEvent[]): SessionCo
     // Normalized so a Cursor spelling collapses onto the same key every other source uses; the
     // name is otherwise left alone, with provenance carried by `costBasis` rather than a suffix
     // that would split one model across two rows in every by-model chart.
-    const model = normalizeModelName(event.model || '(unknown)');
+    const model = modelOf(event);
     perModelMap.set(model, addUsage(perModelMap.get(model) ?? emptyUsage(), usage));
     perModelCost.set(model, (perModelCost.get(model) ?? 0) + event.costUSD);
   }
@@ -167,7 +187,7 @@ function pseudoSession(day: string, events: CursorUsageEvent[]): RawSessionData 
   const stamps = events.map((e) => Date.parse(e.date)).filter((n) => Number.isFinite(n));
   const startTime = stamps.length ? Math.min(...stamps) : 0;
   const endTime = stamps.length ? Math.max(...stamps) : 0;
-  const models = [...new Set(events.map((e) => normalizeModelName(e.model || '(unknown)')))];
+  const models = [...new Set(events.map(modelOf))];
 
   const delta: MetricDelta = {
     recordId: `${sessionId}-usage`,
@@ -210,14 +230,14 @@ function pseudoSession(day: string, events: CursorUsageEvent[]): RawSessionData 
 /**
  * Convert a parsed usage export into sessions and cost rows the pipeline already understands.
  *
- * `cursorSessions` should be the Cursor sessions in scope for this run; anything else simply
- * cannot contain a Cursor usage event and only widens the chance of a false ambiguity.
+ * Pass the run's whole session set: the matcher narrows to Cursor's own sessions itself, so no
+ * caller has to know which agent name the export belongs to.
  */
 export function buildCursorUsageSessions(
   usage: CursorUsageImport,
-  cursorSessions: RawSessionData[]
+  sessions: RawSessionData[]
 ): CursorUsageSessions {
-  const windows = windowsOf(cursorSessions);
+  const windows = windowsOf(sessions);
   const byMatchedSession = new Map<string, CursorUsageEvent[]>();
   const byDay = new Map<string, CursorUsageEvent[]>();
   let matched = 0;
@@ -227,22 +247,11 @@ export function buildCursorUsageSessions(
     const ms = Date.parse(event.date);
     const sessionId = Number.isFinite(ms) ? containingSession(windows, ms) : undefined;
     if (sessionId !== undefined) {
-      const group = byMatchedSession.get(sessionId);
-      if (group) {
-        group.push(event);
-      } else {
-        byMatchedSession.set(sessionId, [event]);
-      }
+      pushInto(byMatchedSession, sessionId, event);
       matched += 1;
       continue;
     }
-    const day = event.day || 'unknown';
-    const group = byDay.get(day);
-    if (group) {
-      group.push(event);
-    } else {
-      byDay.set(day, [event]);
-    }
+    pushInto(byDay, event.day || 'unknown', event);
     unmatched += 1;
   }
 
