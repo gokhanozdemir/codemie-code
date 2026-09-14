@@ -836,13 +836,15 @@
     var ta = DATA.meta.cursorTeamAnalytics;
     host.appendChild(el('h2', 'view-title', 'Cursor Team API'));
     if (!ta) {
-      host.appendChild(el('p', 'view-sub', 'Not fetched for this report.'));
-      host.appendChild(el('div', 'empty', 'Run with --cursor-team-analytics and CURSOR_TEAM_ANALYTICS_API_KEY set to include your own Cursor Team Analytics aggregates.'));
+      host.appendChild(el('p', 'view-sub', 'Not fetched for this report \u00b7 enterprise team admins only'));
+      // Never leave a non-admin reader chasing a credential they cannot get, for data that would
+      // not answer their question anyway. Name the path that actually works.
+      host.appendChild(el('div', 'empty', 'Cursor Team Analytics is available to <strong>enterprise team admins</strong> with an admin-scoped API key, and it returns edit and activity aggregates only \u2014 never tokens or cost.<br><br>For real Cursor tokens and cost, export your usage from the Cursor dashboard (Usage \u2192 Export) and re-run with <code>--cursor-usage-csv &lt;path&gt;</code>.'));
       return;
     }
     var range = (ta.startDate || '…') + ' → ' + (ta.endDate || '…');
-    host.appendChild(el('p', 'view-sub', 'Fetched from Cursor\u2019s Team Analytics API for ' + esc(ta.userEmail) + ' · ' + esc(range)));
-    host.appendChild(el('div', 'alert alert-info', 'Remote data, shown separately on purpose. These are Cursor\u2019s own edit and activity aggregates for your account; they carry no token or cost fields and no session key, so nothing here is joined to the local sessions or added to any cost figure elsewhere in this report.'));
+    host.appendChild(el('p', 'view-sub', 'Team API aggregates (admin) for ' + esc(ta.userEmail) + ' · ' + esc(range)));
+    host.appendChild(el('div', 'alert alert-info', 'Remote <strong>admin team-API</strong> aggregates, shown separately on purpose. These are Cursor\u2019s own edit and activity counters for your account. They carry <strong>no token or cost fields</strong> and no session key, so nothing here is joined to the local sessions or added to any cost figure elsewhere in this report \u2014 and this section can never tell you what Cursor cost. For that, import a usage export with <code>--cursor-usage-csv</code>.'));
     if (ta.failedEndpoints && ta.failedEndpoints.length) {
       host.appendChild(el('div', 'alert alert-warning', 'Incomplete: ' + esc(ta.failedEndpoints.join(', ')) + ' could not be fetched, so this section is partial.'));
     }
