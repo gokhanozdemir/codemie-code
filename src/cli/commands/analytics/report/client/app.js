@@ -824,6 +824,47 @@
     host.appendChild(changeCard);
   };
 
+  /**
+   * Cursor Team Analytics — a REMOTE, opt-in source, deliberately kept in its own view.
+   *
+   * It is never merged into the session table and never contributes to any cost or token
+   * figure: the API returns per-user/per-date aggregates with no composerId to join on, and no
+   * token or cost fields to join with. Two different things are being counted, so they are
+   * shown as two different things. The view is hidden entirely unless the pull happened.
+   */
+  VIEWS.cursorteam = function (host) {
+    var ta = DATA.meta.cursorTeamAnalytics;
+    host.appendChild(el('h2', 'view-title', 'Cursor Team API'));
+    if (!ta) {
+      host.appendChild(el('p', 'view-sub', 'Not fetched for this report.'));
+      host.appendChild(el('div', 'empty', 'Run with --cursor-team-analytics and CURSOR_TEAM_ANALYTICS_API_KEY set to include your own Cursor Team Analytics aggregates.'));
+      return;
+    }
+    var range = (ta.startDate || '…') + ' → ' + (ta.endDate || '…');
+    host.appendChild(el('p', 'view-sub', 'Fetched from Cursor\u2019s Team Analytics API for ' + esc(ta.userEmail) + ' · ' + esc(range)));
+    host.appendChild(el('div', 'alert alert-info', 'Remote data, shown separately on purpose. These are Cursor\u2019s own edit and activity aggregates for your account; they carry no token or cost fields and no session key, so nothing here is joined to the local sessions or added to any cost figure elsewhere in this report.'));
+    if (ta.failedEndpoints && ta.failedEndpoints.length) {
+      host.appendChild(el('div', 'alert alert-warning', 'Incomplete: ' + esc(ta.failedEndpoints.join(', ')) + ' could not be fetched, so this section is partial.'));
+    }
+    (ta.metrics || []).forEach(function (m) {
+      var c = card(m.label, m.endpoint);
+      var rows = m.rows || [];
+      if (!rows.length) {
+        c._body.appendChild(el('div', 'empty', 'No rows returned for this range.'));
+      } else {
+        // Column set is whatever the API sent — the report does not curate or rename it, so a
+        // field Cursor adds later shows up as itself rather than being silently dropped.
+        var cols = [];
+        rows.forEach(function (r) { Object.keys(r).forEach(function (k) { if (cols.indexOf(k) === -1) cols.push(k); }); });
+        var body = rows.map(function (r) {
+          return cols.map(function (k) { return esc(r[k] == null ? '—' : (typeof r[k] === 'object' ? JSON.stringify(r[k]) : r[k])); });
+        });
+        c._body.innerHTML = '<div class="table-wrapper">' + tableHTML(cols, body) + '</div>';
+      }
+      host.appendChild(c);
+    });
+  };
+
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
     host.appendChild(el('p', 'view-sub', 'Estimated cost (API-equivalent) — token usage × model pricing. This is what the same usage would have been metered at through the API, not an invoice.'));
@@ -1457,6 +1498,10 @@
     root.innerHTML = '';
     (VIEWS[state.view] || VIEWS.overview)(root, filtered());
     document.querySelectorAll('.nav-i').forEach(function (n) { n.classList.toggle('active', n.getAttribute('data-view') === state.view); });
+    // The remote-source view is opt-in; without a pull there is nothing to navigate to.
+    document.querySelectorAll('.nav-i[data-optional]').forEach(function (n) {
+      if (n.getAttribute('data-view') === 'cursorteam' && !DATA.meta.cursorTeamAnalytics) n.style.display = 'none';
+    });
   }
 
   function buildControls() {

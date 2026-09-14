@@ -127,6 +127,7 @@ column that moved (see [Database schema drift](#database-schema-drift-after-a-cu
 |---|---|
 | `CURSOR_HOME` | Overrides `~/.cursor`. Also relocates `state.vscdb` to `$CURSOR_HOME/User/globalStorage/state.vscdb`, mirroring its real layout relative to Cursor's app-data root. Unset (the default) uses `~/.cursor` plus the per-OS app-data path above. |
 | `CODEMIE_DEBUG=true` | Enables the `[cursor]` debug logging described under [Logging and debugging](#logging-and-debugging). |
+| `CURSOR_TEAM_ANALYTICS_API_KEY` | Admin-scoped Cursor Enterprise API key. Required *together with* `--cursor-team-analytics` before any network call is made; neither alone is enough. Unset (the default) means analytics stays entirely local. |
 
 `CURSOR_HOME` mirrors `COPILOT_HOME` in the Copilot CLI plugin and is what lets the whole
 ingestion path be driven against a fixture tree in tests.

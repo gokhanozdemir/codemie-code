@@ -251,6 +251,12 @@ export interface AnalyticsOptions {
   scanNative?: boolean;
   /** When true (via --include-external), include non-CodeMie-owned native sessions in output (matches pre-fix behavior). */
   includeExternal?: boolean;
+  /**
+   * When true (via --cursor-team-analytics), pull the report owner's own Cursor Team Analytics
+   * aggregates. Requires CURSOR_TEAM_ANALYTICS_API_KEY as well — the flag alone makes no call,
+   * and neither does the credential alone.
+   */
+  cursorTeamAnalytics?: boolean;
 }
 
 /** Options for the `analytics otel` subcommand: the shared base plus OTEL-specific flags. */

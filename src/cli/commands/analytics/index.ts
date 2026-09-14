@@ -23,6 +23,7 @@ export function createAnalyticsCommand(): Command {
   applyCommonOptions(command)
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
     .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
+    .option('--cursor-team-analytics', 'Fetch your own Cursor Team Analytics aggregates (requires CURSOR_TEAM_ANALYTICS_API_KEY; makes a network call)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -171,12 +172,30 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         }
       }
 
+      // The one network call in the analytics path, and it happens only when the user asked for
+      // it AND a credential exists. Fail-soft: a null result simply omits the report section.
+      let cursorTeamAnalytics;
+      if (options.cursorTeamAnalytics) {
+        const { fetchCursorTeamAnalytics } = await import('@/agents/plugins/cursor/cursor.team-analytics.js');
+        cursorTeamAnalytics = (await fetchCursorTeamAnalytics({
+          enabled: true,
+          apiKey: process.env.CURSOR_TEAM_ANALYTICS_API_KEY,
+          userEmail,
+          ...(filter.fromDate !== undefined && { startDate: filter.fromDate.toISOString().slice(0, 10) }),
+          ...(filter.toDate !== undefined && { endDate: filter.toDate.toISOString().slice(0, 10) }),
+        })) ?? undefined;
+        if (!cursorTeamAnalytics) {
+          console.log(chalk.dim('\n  Cursor Team Analytics unavailable (needs CURSOR_TEAM_ANALYTICS_API_KEY, a configured email, and an enterprise team). Report continues without it.'));
+        }
+      }
+
       const { index: costIndex, summary } = costResult;
       const payload = buildPayload(analytics, costIndex, summary, {
         rangeLabel: options.last ?? (options.from || options.to ? 'custom' : 'all'),
         projectFilter: options.project ?? 'all',
         generatedAt: new Date().toISOString(),
         ...(userEmail !== undefined && { userEmail }),
+        ...(cursorTeamAnalytics !== undefined && { cursorTeamAnalytics }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
