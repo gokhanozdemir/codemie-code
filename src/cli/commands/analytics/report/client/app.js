@@ -60,15 +60,22 @@
   // read as "this session was free", so every money/token cell goes through these helpers
   // and shows an em dash instead. Aggregates only dash out when NOTHING in the group was
   // measurable — a mixed group still shows the real sum of what was measured.
-  // "Included" is Cursor's own word: its usage export marks every such event Kind=Included,
-  // meaning covered by the subscription rather than separately priced. It is used only for the
-  // cost cell — a token count has no equivalent, so those stay an em dash.
-  var UNPRICED_LABEL = 'Included';
+  // Cursor's own usage export calls such events Kind=Included ("covered by the plan"), but we
+  // deliberately do not reuse that word: the cost column is an API-equivalent estimate, not a
+  // bill, and a missing local token signal is not evidence that the usage was free.
+  var UNKNOWN_LABEL = '—';
   function usageUnknown(s) { return !!(s && s.usageUnavailableReason); }
   function anyMeasured(list) { return (list || []).some(function (s) { return !usageUnknown(s); }); }
-  function fmtUSDOf(s, n) { return usageUnknown(s) ? UNPRICED_LABEL : fmtUSD(n); }
-  function fmtTokensOf(s, n) { return usageUnknown(s) ? '—' : fmtTokens(n); }
-  function fmtUSDAgg(list, n) { return anyMeasured(list) ? fmtUSD(n) : UNPRICED_LABEL; }
+  function fmtUSDOf(s, n) { return usageUnknown(s) ? UNKNOWN_LABEL : fmtUSD(n); }
+  function fmtTokensOf(s, n) { return usageUnknown(s) ? UNKNOWN_LABEL : fmtTokens(n); }
+  function fmtUSDAgg(list, n) { return anyMeasured(list) ? fmtUSD(n) : UNKNOWN_LABEL; }
+  // Shown on Overview/Cost when EVERY session in view is unmeasurable — the common shape after
+  // deselecting the measured agents and leaving only an analytics-only one such as Cursor. Without
+  // it the all-dash KPI row reads as a broken agent-chip filter rather than as absent data.
+  function appendNoTelemetryNote(host, list) {
+    if (list.length && !anyMeasured(list)) host.appendChild(el('div', 'alert alert-info', NO_TELEMETRY_NOTE));
+  }
+  var NO_TELEMETRY_NOTE = 'No local token telemetry for the sessions in view — token and cost figures are unavailable, not zero. Analytics-only agents such as Cursor record transcripts and tool calls locally but no billable token counts; other panels on this report still work.';
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function shortPath(p) { var parts = String(p || '').split('/'); return parts[parts.length - 1] || p; }
@@ -328,17 +335,20 @@
 
     var totalCost = sum(fs, function (s) { return s.costUSD; });
     var priced = DATA.meta.totals.pricedSessions;
+    // Provenance, not arithmetic: a filtered set can sum to $0 either because nothing was spent or
+    // because nothing was measurable. Only the latter may claim a number, so gate on the sessions.
+    var measured = anyMeasured(fs);
     var kpis = [
       ['Sessions', fmtNum(fs.length), ''],
       ['Duration', fmtDuration(sum(fs, function (s) { return s.durationMs; })), 'wall-clock span'],
       ['Turns', fmtNum(sum(fs, function (s) { return s.turns; })), fs.length ? (Math.round(sum(fs, function (s) { return s.turns; }) / fs.length) + ' / session') : ''],
       ['Files touched', fmtNum(sum(fs, function (s) { return s.fileOps; })), 'net ' + (sum(fs, function (s) { return s.netLines; }) >= 0 ? '+' : '') + fmtNum(sum(fs, function (s) { return s.netLines; })) + ' lines'],
       ['Tool calls', fmtNum(sum(fs, function (s) { return s.toolCallsTotal; })), successRate(fs) + '% success'],
-      ['Est. cost', totalCost ? fmtUSD(totalCost) : '—', priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions) : 'tokens × pricing']
+      ['Est. cost', measured ? fmtUSD(totalCost) : UNKNOWN_LABEL, measured ? (priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions) : 'tokens × pricing') : 'no local token telemetry']
     ];
     var grid = el('div', 'kpi-grid');
     kpis.forEach(function (k) {
-      var c = el('div', 'kpi' + (k[0] === 'Est. cost' && !totalCost ? ' soon' : ''));
+      var c = el('div', 'kpi' + (k[0] === 'Est. cost' && !measured ? ' soon' : ''));
       c.appendChild(el('div', 'kpi-label', k[0]));
       c.appendChild(el('div', 'kpi-value', k[1]));
       if (k[2]) c.appendChild(el('div', 'kpi-sub', k[2]));
@@ -354,24 +364,25 @@
     var tcWrite = sum(fs, function (s) { return s.tokens ? s.tokens.cacheCreation : 0; });
     var tcRead = sum(fs, function (s) { return s.tokens ? s.tokens.cacheRead : 0; });
     var tTotal = sum(fs, function (s) { return s.tokens ? s.tokens.total : 0; });
-    var tkv = function (v) { return tTotal > 0 ? fmtTokens(v) : '—'; };
+    var tkv = function (v) { return measured && tTotal > 0 ? fmtTokens(v) : UNKNOWN_LABEL; };
     var tokenKpis = [
       ['Input tokens', tkv(tIn), 'prompts sent to the model'],
       ['Output tokens', tkv(tOut), 'completions generated'],
       ['Cache write', tkv(tcWrite), 'tokens written to cache'],
       ['Cache read', tkv(tcRead), 'tokens served from cache'],
-      ['Total tokens', tkv(tTotal), priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions + ' sessions') : 'across sessions in view']
+      ['Total tokens', tkv(tTotal), measured ? (priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions + ' sessions') : 'across sessions in view') : 'no local token telemetry']
     ];
     host.appendChild(el('div', 'kpi-section-label', 'Token usage'));
     var tgrid = el('div', 'kpi-grid kpi-grid-tokens');
     tokenKpis.forEach(function (k) {
       var c = el('div', 'kpi');
       c.appendChild(el('div', 'kpi-label', k[0]));
-      c.appendChild(el('div', 'kpi-value' + (tTotal > 0 ? '' : ' muted'), k[1]));
+      c.appendChild(el('div', 'kpi-value' + (measured && tTotal > 0 ? '' : ' muted'), k[1]));
       if (k[2]) c.appendChild(el('div', 'kpi-sub', k[2]));
       tgrid.appendChild(c);
     });
     host.appendChild(tgrid);
+    appendNoTelemetryNote(host, fs);
 
     // efficiency headline KPIs (full detail on the Efficiency tab)
     var effCacheReadCost = sum(fs, function (s) { return s.cacheReadCostUSD || 0; });
@@ -815,15 +826,16 @@
 
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
-    host.appendChild(el('p', 'view-sub', 'Estimated cost (API-equivalent) — token usage × model pricing. On a subscription you don’t pay per token; this is the equivalent metered API value.'));
+    host.appendChild(el('p', 'view-sub', 'Estimated cost (API-equivalent) — token usage × model pricing. This is what the same usage would have been metered at through the API, not an invoice.'));
 
     var total = sum(fs, function (s) { return s.costUSD; });
     var priced = DATA.meta.totals.pricedSessions, totalSessions = DATA.meta.totals.sessions;
 
     var banner = el('div', 'alert ' + (priced < totalSessions ? 'alert-warning' : 'alert-info'));
     var msg = 'Priced ' + priced + ' of ' + totalSessions + ' sessions with recoverable token usage. '
-      + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
-      + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
+      + 'The rest carry no recoverable token counts: either the native log was rotated/deleted, or the agent '
+      + 'records transcripts locally but no token telemetry at all (analytics-only agents such as Cursor). '
+      + 'This does not affect the cost of the sessions that are priced. See Coverage by agent below.';
     if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Unpriced models: ' + DATA.meta.unpricedModels.join(', ') + '.';
     banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
@@ -834,6 +846,7 @@
       var c = el('div', 'kpi'); c.appendChild(el('div', 'kpi-label', k[0])); c.appendChild(el('div', 'kpi-value', k[1])); grid.appendChild(c);
     });
     host.appendChild(grid);
+    appendNoTelemetryNote(host, fs);
 
     // per-agent coverage — answers "which tools' metrics are included?"
     var cov = DATA.meta.coverage || [];
@@ -1257,7 +1270,7 @@
     // which bills in premium requests rather than tokens, and whose older CLI versions
     // recorded no telemetry at all). Appended so other agents' cards are unchanged.
     var costRows = [
-      ['Cost', fmtUSDOf(s, s.costUSD), usageUnknown(s) ? 'covered by subscription' : 'API-equivalent'],
+      ['Cost', fmtUSDOf(s, s.costUSD), usageUnknown(s) ? 'no local token telemetry' : 'API-equivalent'],
       ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
       ['Duration', fmtDuration(s.durationMs || 0), ''],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
