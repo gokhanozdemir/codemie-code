@@ -21,10 +21,9 @@
  * SELECTed.
  */
 
-import { existsSync } from 'fs';
 import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
-import { asBoolean, asEpochMs, asNumber, asString, loadSqlite } from './cursor.sqlite.js';
+import { asBoolean, asEpochMs, asNumber, asString, withReadOnlyDb } from './cursor.sqlite.js';
 
 /** What `composerHeaders` knows about one Cursor Agent conversation. */
 export interface CursorComposerHeader {
@@ -156,78 +155,63 @@ function normalizeHeader(source: ComposerRow): Omit<CursorComposerHeader, 'compo
 export async function readCursorComposerIndex(
   dbPath: string = getCursorStateDbPath()
 ): Promise<CursorComposerIndex> {
-  const index: CursorComposerIndex = new Map();
+  const index = await withReadOnlyDb(
+    dbPath,
+    'composer index',
+    'state database',
+    new Map<string, CursorComposerHeader>(),
+    (db) => {
+      const found: CursorComposerIndex = new Map();
+      const rows = db.prepare('SELECT * FROM composerHeaders').all() as ComposerRow[];
 
-  if (!existsSync(dbPath)) {
-    logger.debug(`[cursor] no state database at ${dbPath}`);
-    return index;
-  }
+      for (const row of rows) {
+        try {
+          let composerId: string | undefined;
+          let header: Omit<CursorComposerHeader, 'composerId'>;
+          let isDraft: unknown;
 
-  const sqlite = await loadSqlite('composer index');
-  if (!sqlite) {
-    return index;
-  }
+          const value = asString(row.value);
+          if (value !== undefined) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(value);
+            } catch (error) {
+              logger.debug(`[cursor] unparsable composerHeaders value for key "${String(row.key)}":`, error);
+              continue;
+            }
 
-  let db: InstanceType<typeof sqlite.DatabaseSync> | undefined;
-  try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
-    const rows = db.prepare('SELECT * FROM composerHeaders').all() as ComposerRow[];
+            if (!parsed || typeof parsed !== 'object') {
+              continue;
+            }
 
-    for (const row of rows) {
-      try {
-        let composerId: string | undefined;
-        let header: Omit<CursorComposerHeader, 'composerId'>;
-        let isDraft: unknown;
+            const parsedRow = parsed as ComposerRow;
+            composerId = asString(parsedRow.composerId) ?? composerIdFromKey(row.key);
+            header = normalizeHeader(parsedRow);
+            isDraft = parsedRow.isDraft;
+          } else {
+            composerId = asString(row.composerId);
+            header = normalizeHeader(row);
+            isDraft = row.isDraft;
+          }
 
-        const value = asString(row.value);
-        if (value !== undefined) {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(value);
-          } catch (error) {
-            logger.debug(`[cursor] unparsable composerHeaders value for key "${String(row.key)}":`, error);
+          if (!composerId) {
             continue;
           }
 
-          if (!parsed || typeof parsed !== 'object') {
+          if (asBoolean(isDraft)) {
             continue;
           }
 
-          const parsedRow = parsed as ComposerRow;
-          composerId = asString(parsedRow.composerId) ?? composerIdFromKey(row.key);
-          header = normalizeHeader(parsedRow);
-          isDraft = parsedRow.isDraft;
-        } else {
-          composerId = asString(row.composerId);
-          header = normalizeHeader(row);
-          isDraft = row.isDraft;
+          found.set(composerId, { composerId, ...header });
+        } catch (error) {
+          // A single malformed row must not lose the rest of the table.
+          logger.debug('[cursor] skipping unreadable composerHeaders row:', error);
         }
-
-        if (!composerId) {
-          continue;
-        }
-
-        if (asBoolean(isDraft)) {
-          continue;
-        }
-
-        index.set(composerId, { composerId, ...header });
-      } catch (error) {
-        // A single malformed row must not lose the rest of the table.
-        logger.debug('[cursor] skipping unreadable composerHeaders row:', error);
       }
+
+      return found;
     }
-  } catch (error) {
-    // Missing table, renamed column, corrupt file, locked database — all the same to us.
-    logger.debug(`[cursor] state database unusable at ${dbPath}:`, error);
-    return new Map();
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // closing a database we failed to open is not an error worth reporting
-    }
-  }
+  );
 
   logger.debug(`[cursor] composer index covers ${index.size} session(s)`);
   return index;

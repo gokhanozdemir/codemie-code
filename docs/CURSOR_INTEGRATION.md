@@ -99,7 +99,7 @@ What this means when reading a report:
 - The Enterprise Team Analytics API does **not** close this gap and is **not integrated**: none of
   its documented endpoints returns token or cost fields at any tier, and it needs an admin-scoped
   key an ordinary team member cannot obtain. See
-  [Cursor Enterprise Team Analytics API](../.ai-run/guides/integration/external-integrations.md#cursor-enterprise-team-analytics-api-not-integrated).
+  [Cursor Enterprise Team Analytics API](ANALYTICS-REPORT.md#cursor-enterprise-team-analytics-api-not-integrated).
 
 Nothing here is inferred from `contextTokensUsed`, transcript text length, or tool-call counts.
 Those correlate with usage but are not billable token counts, and presenting them as such would

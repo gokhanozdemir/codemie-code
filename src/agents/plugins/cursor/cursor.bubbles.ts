@@ -21,10 +21,9 @@
  * SELECTed, with the composerId parameterized (never interpolated) into the query.
  */
 
-import { existsSync } from 'fs';
 import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
-import { asNumber, asString, loadSqlite } from './cursor.sqlite.js';
+import { asNumber, asString, withReadOnlyDb } from './cursor.sqlite.js';
 
 /** Aggregated tool-outcome and token-usage signal for one Cursor Agent conversation's bubbles. */
 export interface CursorBubbleSummary {
@@ -129,25 +128,12 @@ export async function readCursorBubbles(
   composerId: string,
   dbPath: string = getCursorStateDbPath()
 ): Promise<CursorBubbleSummary> {
-  const summary = emptySummary();
+  return withReadOnlyDb(dbPath, 'bubble summary', 'state database', emptySummary(), (db) => {
+    const summary = emptySummary();
+    let toolOutcomeCount = 0;
+    let tokenSignalCount = 0;
+    let scannedCount = 0;
 
-  if (!existsSync(dbPath)) {
-    logger.debug(`[cursor] no state database at ${dbPath}`);
-    return summary;
-  }
-
-  const sqlite = await loadSqlite('bubble summary');
-  if (!sqlite) {
-    return summary;
-  }
-
-  let db: InstanceType<typeof sqlite.DatabaseSync> | undefined;
-  let toolOutcomeCount = 0;
-  let tokenSignalCount = 0;
-  let scannedCount = 0;
-
-  try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
     const pattern = `bubbleId:${escapeLikeFragment(composerId)}:%`;
     const rows = db
       .prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE ? ESCAPE '\\'")
@@ -191,22 +177,12 @@ export async function readCursorBubbles(
         logger.debug('[cursor] skipping unreadable cursorDiskKV row:', error);
       }
     }
-  } catch (error) {
-    // Missing table, renamed column, corrupt file, locked database — all the same to us.
-    logger.debug(`[cursor] state database unusable at ${dbPath}:`, error);
-    return emptySummary();
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // closing a database we failed to open is not an error worth reporting
-    }
-  }
 
-  logger.debug(
-    `[cursor] bubble summary for composer ${composerId} scanned ${scannedCount} bubble(s): ` +
-      `${toolOutcomeCount} with a tool outcome, ${tokenSignalCount} with a token signal`
-  );
+    logger.debug(
+      `[cursor] bubble summary for composer ${composerId} scanned ${scannedCount} bubble(s): ` +
+        `${toolOutcomeCount} with a tool outcome, ${tokenSignalCount} with a token signal`
+    );
 
-  return summary;
+    return summary;
+  });
 }

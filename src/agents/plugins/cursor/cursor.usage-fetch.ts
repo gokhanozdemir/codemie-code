@@ -29,10 +29,9 @@
  * which keeps handing over a credential a deliberate act.
  */
 
-import { existsSync } from 'node:fs';
 import { logger } from '@/utils/logger.js';
 import { getCursorStateDbPath } from './cursor.paths.js';
-import { loadSqlite } from './cursor.sqlite.js';
+import { withReadOnlyDb } from './cursor.sqlite.js';
 import { parseCursorUsageCsv, type CursorUsageImport } from './cursor.usage-csv.js';
 
 /** The cookie Cursor's dashboard authenticates with: `<userId>::<accessToken>`. */
@@ -101,18 +100,7 @@ export async function readCursorSessionCookie(
     return undefined;
   }
 
-  if (!existsSync(dbPath)) {
-    logger.debug('[cursor] no state database; cannot read the session cookie');
-    return undefined;
-  }
-  const sqlite = await loadSqlite('the session cookie read');
-  if (!sqlite) {
-    return undefined;
-  }
-
-  let db: InstanceType<typeof sqlite.DatabaseSync> | undefined;
-  try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+  return withReadOnlyDb(dbPath, 'the session cookie read', 'state database', undefined, (db) => {
     const rows = db
       .prepare(
         `SELECT value FROM ItemTable
@@ -127,16 +115,7 @@ export async function readCursorSessionCookie(
     }
     logger.debug('[cursor] no session cookie found in the state database (signed out?)');
     return undefined;
-  } catch (error) {
-    logger.debug(`[cursor] state database unusable while reading the session cookie: ${(error as Error).message}`);
-    return undefined;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* closing a failed open is not an error worth reporting */
-    }
-  }
+  });
 }
 
 /**

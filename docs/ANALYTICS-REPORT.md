@@ -460,6 +460,8 @@ The response goes through the exact same parser as the file import, so a downloa
 hand-saved one can never be interpreted differently. Any failure — 401, 403, a changed endpoint, a
 sign-in redirect returning HTML — omits the section and leaves the rest of the report intact.
 
+<a id="cursor-enterprise-team-analytics-api-not-integrated"></a>
+
 > **What about the Cursor Team Analytics API?** CodeMie does not use it. Its documented endpoints
 > return no token or cost field at any tier, so it cannot answer "what did Cursor cost?", and it
 > requires an enterprise-admin key most users cannot obtain. An implementation exists on the

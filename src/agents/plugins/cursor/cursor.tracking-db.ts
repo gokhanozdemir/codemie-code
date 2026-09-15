@@ -15,11 +15,10 @@
  * Reads are strictly read-only: the database is opened with `readOnly` and only SELECTed.
  */
 
-import { existsSync } from 'fs';
 import { logger } from '@/utils/logger.js';
 import { CURSOR_AUTO_MODEL_LABEL, CURSOR_AUTO_MODEL_SENTINEL } from './cursor.constants.js';
 import { getCursorTrackingDbPath } from './cursor.paths.js';
-import { asEpochMs, asString, loadSqlite } from './cursor.sqlite.js';
+import { asEpochMs, asString, withReadOnlyDb } from './cursor.sqlite.js';
 
 /** What the tracking database knows about one conversation. */
 export interface CursorConversationActivity {
@@ -76,65 +75,50 @@ interface ActivityRow {
 export async function readCursorTrackingIndex(
   dbPath: string = getCursorTrackingDbPath()
 ): Promise<CursorTrackingIndex> {
-  const index: CursorTrackingIndex = new Map();
+  const index = await withReadOnlyDb(
+    dbPath,
+    'tracking enrichment',
+    'ai-tracking database',
+    new Map() as CursorTrackingIndex,
+    (db) => {
+      const found: CursorTrackingIndex = new Map();
+      const rows = db.prepare(ACTIVITY_QUERY).all() as ActivityRow[];
 
-  if (!existsSync(dbPath)) {
-    logger.debug(`[cursor] no ai-tracking database at ${dbPath}`);
-    return index;
-  }
+      for (const row of rows) {
+        const id = asString(row.id);
+        if (!id) {
+          continue;
+        }
+        const entry = found.get(id) ?? { files: [], models: [] };
 
-  const sqlite = await loadSqlite('tracking enrichment');
-  if (!sqlite) {
-    return index;
-  }
+        const file = asString(row.file);
+        if (file && !entry.files.includes(file)) {
+          entry.files.push(file);
+        }
 
-  let db: InstanceType<typeof sqlite.DatabaseSync> | undefined;
-  try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
-    const rows = db.prepare(ACTIVITY_QUERY).all() as ActivityRow[];
+        // `default` is Cursor's sentinel for "you pick" — reported under the name Cursor's own
+        // dashboard gives it rather than dropped, so the row reads "Auto" instead of blank.
+        const raw = asString(row.model);
+        const model = raw === CURSOR_AUTO_MODEL_SENTINEL ? CURSOR_AUTO_MODEL_LABEL : raw;
+        if (model && !entry.models.includes(model)) {
+          entry.models.push(model);
+        }
 
-    for (const row of rows) {
-      const id = asString(row.id);
-      if (!id) {
-        continue;
-      }
-      const entry = index.get(id) ?? { files: [], models: [] };
+        const firstMs = asEpochMs(row.firstMs);
+        if (firstMs !== undefined && (entry.firstEditMs === undefined || firstMs < entry.firstEditMs)) {
+          entry.firstEditMs = firstMs;
+        }
+        const lastMs = asEpochMs(row.lastMs);
+        if (lastMs !== undefined && (entry.lastEditMs === undefined || lastMs > entry.lastEditMs)) {
+          entry.lastEditMs = lastMs;
+        }
 
-      const file = asString(row.file);
-      if (file && !entry.files.includes(file)) {
-        entry.files.push(file);
-      }
-
-      // `default` is Cursor's sentinel for "you pick" — reported under the name Cursor's own
-      // dashboard gives it rather than dropped, so the row reads "Auto" instead of blank.
-      const raw = asString(row.model);
-      const model = raw === CURSOR_AUTO_MODEL_SENTINEL ? CURSOR_AUTO_MODEL_LABEL : raw;
-      if (model && !entry.models.includes(model)) {
-        entry.models.push(model);
-      }
-
-      const firstMs = asEpochMs(row.firstMs);
-      if (firstMs !== undefined && (entry.firstEditMs === undefined || firstMs < entry.firstEditMs)) {
-        entry.firstEditMs = firstMs;
-      }
-      const lastMs = asEpochMs(row.lastMs);
-      if (lastMs !== undefined && (entry.lastEditMs === undefined || lastMs > entry.lastEditMs)) {
-        entry.lastEditMs = lastMs;
+        found.set(id, entry);
       }
 
-      index.set(id, entry);
+      return found;
     }
-  } catch (error) {
-    // Missing table, renamed column, corrupt file, locked database — all the same to us.
-    logger.debug(`[cursor] ai-tracking database unusable at ${dbPath}:`, error);
-    return new Map();
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // closing a database we failed to open is not an error worth reporting
-    }
-  }
+  );
 
   logger.debug(`[cursor] tracking index covers ${index.size} conversation(s)`);
   return index;
